@@ -68,7 +68,8 @@ def make_env(variant, instances, controller: str, noise_std_dev: Union[float, in
                              controller=controller,
                              noise_std_dev=noise_std_dev,
                              savepath=None,
-                             use_safety_layer=safety_layer)
+                             use_safety_layer=safety_layer,
+                             bound_storage_in=False)  # FIXME should not be hardcoded
     else:
         raise ValueError(f'Variant name must be in {VARIANTS}')
     print(f'Selected variant: {variant}')
@@ -227,12 +228,12 @@ def train_rl_algo(variant: str = None,
     act_space = getattr(env, 'single_action_space', env.action_space)
     state_shape = obs_space.shape
     action_shape = act_space.shape
-    bounds = (-1.0, 1.0)
-
+    bounds = (-1.0, 1.0)  # TODO okay for unify also?
     a_net = networks.PolicyNetwork(state_shape, action_shape, fc_params=fc_params,
                                    output='gaussian', bounds=bounds, activation='relu',
                                    out_params={'state_dependent_std': True,
                                                'mean_activation': None})
+
     log_dict = dict(act_learning_rate=act_learning_rate,
                     crit_learning_rate=crit_learning_rate,
                     alpha_learning_rate=alpha_learning_rate,
@@ -260,5 +261,5 @@ def train_rl_algo(variant: str = None,
     agent.init(envs=env, rollout_steps=rollout_steps, min_memories=2000)
     agent = train_loop(agent=agent, env=env, num_epochs=epochs, batch_size=batch_size, rollout_steps=rollout_steps,
                        train_steps=train_steps, test_every=test_every, test_env=test_env)
-    test_agent(agent, test_env)
+    test_agent(agent, test_env, render_plots=False)
     agent.save('_final')

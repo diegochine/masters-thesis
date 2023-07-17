@@ -1,14 +1,11 @@
-from typing import Tuple
-
 import numpy as np
 import pandas as pd
-from gymnasium.spaces import Box
 from gurobipy import Model, GRB
 
-from envs.vpp_env import VPPEnv
+import envs
 
 
-class SafetyLayerVPPEnv(VPPEnv):
+class SafetyLayerVPPEnv(envs.VPPEnv):
     """
     Wrapper environment providing the safety layer for the Markovian version of the VPP optimization model.
     """
@@ -55,7 +52,7 @@ class SafetyLayerVPPEnv(VPPEnv):
         tilde_cons = self.shift[self.timestep] + self.tot_cons_real[self.timestep]
         tilde_ren = self.p_ren_pv_real[self.timestep]
 
-        # create optimization model, make variables and set constrasints
+        # create optimization model, make variables and set constraints
         mod = Model()
 
         grid_in_hat = mod.addVar(vtype=GRB.SEMICONT, lb=eps, ub=600 - eps,
@@ -64,7 +61,7 @@ class SafetyLayerVPPEnv(VPPEnv):
                                       name="diesel_power_hat")
         grid_out = mod.addVar(vtype=GRB.CONTINUOUS, name="grid_out")
 
-        if self.action_space.shape == (4,):  # standard variant
+        if isinstance(self, envs.StandardVPPEnv):  # standard variant
             storage_in_hat = mod.addVar(vtype=GRB.SEMICONT, lb=eps, ub=min(self.cap_max - self.storage, 200) - eps,
                                         name="storage_in_hat")
             storage_out_hat = mod.addVar(vtype=GRB.SEMICONT, lb=eps, ub=min(self.storage, 200) - eps,
@@ -89,7 +86,7 @@ class SafetyLayerVPPEnv(VPPEnv):
         # get the closest feasible action
         feasible = self.optimize(mod)
         assert feasible
-        if self.action_space.shape == (4,):
+        if isinstance(self, envs.StandardVPPEnv):
             closest = np.array([mod.getVarByName(var).X
                                 for var in ('storage_in_hat', 'storage_out_hat', 'grid_in_hat', 'diesel_power_hat')],
                                dtype=np.float64)

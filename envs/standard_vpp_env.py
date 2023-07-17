@@ -1,6 +1,5 @@
-from typing import Tuple, List
+from typing import Tuple
 
-import gurobipy
 import numpy as np
 import pandas as pd
 from gurobipy import Model, GRB
@@ -25,7 +24,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                  controller: str,
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
-                 use_safety_layer: bool = False):
+                 use_safety_layer: bool = False,
+                 bound_storage_in: bool = True):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -34,6 +34,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         :param noise_std_dev: float; the standard deviation of the additive gaussian noise for the realizations.
         :param savepath: string; if not None, the gurobi models are saved to this directory.
         :param use_safety_layer: bool, if True enable safety layer during training.
+        :param bound_storage_in: bool; used to switch between enforcing p_storage_in var upper bound via the optimization model
+                                or letting the rl agent learn the constraint.
         """
 
         super().__init__(predictions=predictions,
@@ -43,6 +45,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                          noise_std_dev=noise_std_dev,
                          savepath=savepath,
                          use_safety_layer=use_safety_layer)
+        self._bound_storage_in = bound_storage_in
 
         # Here we define the observation and action spaces
         self.observation_space = Box(low=-np.inf, high=np.inf, shape=(self.N * 3 + 1,), dtype=np.float32)
@@ -142,7 +145,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                 grid_out = tilde_cons - self.p_ren_pv_real[
                     self.timestep] - storage_out - diesel_power + storage_in + grid_in
             else:
-                grid_out = 1000  # arbitrary penalty, TODO simple solution but can we do better?
+                grid_out = -grid_out  # arbitrary penalty, TODO simple solution but can we do better?
                 feasible_action = None
             cost = (self.c_grid[self.timestep] * grid_out + self.c_diesel * diesel_power - self.c_grid[
                 self.timestep] * grid_in)
@@ -199,7 +202,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         mod.addConstr(p_storage_in <= self.cap_max - self.storage)
         mod.addConstr(p_storage_out <= self.storage)
 
-        mod.addConstr(p_storage_in <= 200)
+        if self._bound_storage_in:
+            mod.addConstr(p_storage_in <= 200)
         mod.addConstr(p_storage_out <= 200)
 
         # Diesel and grid bounds
@@ -219,20 +223,29 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         grid_in = mod.getVarByName('p_grid_in').X
         grid_out = mod.getVarByName('p_grid_out').X
 
-        # Update the storage capacitance
-        if feasible:
+        constraint_violation = min(0, 200 - storage_in)
+
+        if constraint_violation < 0:  # storage_in bound constraint has been violated
+            feasible_action = self.safety_layer((storage_in, storage_out, grid_in, diesel_power))
+            storage_in, storage_out, grid_in, diesel_power = feasible_action
+            feasible_action = feasible_action.reshape(-1, 4)
+            grid_out = tilde_cons - self.p_ren_pv_real[
+                self.timestep] - storage_out - diesel_power + storage_in + grid_in
+        else:
+            assert feasible  # TODO check
+            # Update the storage capacitance
             old_cap_x = self.storage
             self.storage = cap.X
             self.assert_constraints(diesel_power=diesel_power, grid_in=grid_in, grid_out=grid_out,
                                     tilde_cons=tilde_cons,
                                     old_cap_x=old_cap_x, storage_in=storage_in, storage_out=storage_out)
 
-        action = np.array([storage_in, storage_out, grid_in, diesel_power], dtype=np.float64)
+            feasible_action = np.array([storage_in, storage_out, grid_in, diesel_power], dtype=np.float64)
 
         cost = (self.c_grid[self.timestep] * grid_out + self.c_diesel * diesel_power - self.c_grid[
             self.timestep] * grid_in)
 
-        return feasible, cost, action, (0. if feasible else -100.)
+        return feasible, cost, feasible_action, constraint_violation
 
     def assert_constraints(self, diesel_power, grid_in, grid_out, tilde_cons,
                            old_cap_x=None, storage_in=None, storage_out=None):
