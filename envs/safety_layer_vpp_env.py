@@ -21,7 +21,8 @@ class SafetyLayerVPPEnv(envs.VPPEnv):
                  controller: str,
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
-                 use_safety_layer: bool = False):
+                 use_safety_layer: bool = False,
+                 wandb_log: bool = True):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -38,7 +39,8 @@ class SafetyLayerVPPEnv(envs.VPPEnv):
                          controller=controller,
                          noise_std_dev=noise_std_dev,
                          savepath=savepath,
-                         use_safety_layer=use_safety_layer)
+                         use_safety_layer=use_safety_layer,
+                         wandb_log=wandb_log)
 
     def safety_layer(self, action, eps=0.5):  # TODO make external function
         """

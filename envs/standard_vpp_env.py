@@ -25,7 +25,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
                  use_safety_layer: bool = False,
-                 bound_storage_in: bool = True):
+                 bound_storage_in: bool = True,
+                 wandb_log: bool = True):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -44,7 +45,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                          controller=controller,
                          noise_std_dev=noise_std_dev,
                          savepath=savepath,
-                         use_safety_layer=use_safety_layer)
+                         use_safety_layer=use_safety_layer,
+                         wandb_log=wandb_log)
         self._bound_storage_in = bound_storage_in
 
         # Here we define the observation and action spaces
@@ -81,16 +83,12 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         self.tot_cons_pred = None
         self.tot_cons_real = None
         self.mr = None
-        self.storage = self.in_cap
+        self.storage = self.in_cap  # TODO check if this is correct
         self.timestep = 0
         self.cumulative_cost = 0
 
-        self.energy_bought = []
-        self.energy_sold = []
-        self.diesel_power = []
-        self.input_storage = []
-        self.output_storage = []
-        self.storage_capacity = []
+        self.history = dict(energy_bought=[], energy_sold=[], diesel_power=[],
+                            input_storage=[], output_storage=[], storage_capacity=[])
 
     def _solve_rl(self, action: np.array) -> Tuple[bool, int | float, np.array, float]:
         """
@@ -226,11 +224,15 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         constraint_violation = min(0, 200 - storage_in)
 
         if constraint_violation < 0:  # storage_in bound constraint has been violated
-            feasible_action = self.safety_layer((storage_in, storage_out, grid_in, diesel_power))
-            storage_in, storage_out, grid_in, diesel_power = feasible_action
-            feasible_action = feasible_action.reshape(-1, 4)
-            grid_out = tilde_cons - self.p_ren_pv_real[
-                self.timestep] - storage_out - diesel_power + storage_in + grid_in
+            if self.use_safety_layer:
+                feasible_action = self.safety_layer((storage_in, storage_out, grid_in, diesel_power))
+                storage_in, storage_out, grid_in, diesel_power = feasible_action
+                feasible_action = feasible_action.reshape(-1, 4)
+                grid_out = tilde_cons - self.p_ren_pv_real[
+                    self.timestep] - storage_out - diesel_power + storage_in + grid_in
+            else:
+                grid_out = 1000.
+                feasible_action = None
         else:
             assert feasible  # TODO check
             # Update the storage capacitance
@@ -241,6 +243,11 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                                     old_cap_x=old_cap_x, storage_in=storage_in, storage_out=storage_out)
 
             feasible_action = np.array([storage_in, storage_out, grid_in, diesel_power], dtype=np.float64)
+
+            # update history
+            for k, v in (('energy_bought', grid_out), ('energy_sold', grid_in), ('diesel_power', diesel_power),
+                         ('input_storage', storage_in), ('output_storage', storage_out), ('storage_capacity', old_cap_x)):
+                self.history[k].append(v)
 
         cost = (self.c_grid[self.timestep] * grid_out + self.c_diesel * diesel_power - self.c_grid[
             self.timestep] * grid_in)
@@ -329,6 +336,9 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         else:
             reward = -cost
             terminated = (self.timestep == self.N)
+
+        if terminated or truncated:
+            self.log()
 
         return observations, reward, terminated, truncated, {'feasible': feasible,
                                                              'action': actual_action,

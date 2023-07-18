@@ -10,7 +10,7 @@ import tqdm
 from pyagents import networks
 from keras.optimizers import Adam
 
-from envs import ToyVPPEnv, StandardVPPEnv
+from envs import ToyVPPEnv, StandardVPPEnv, CumulativeVPPEnv
 from agents import SACLagEMS
 from utils.online_heuristic import compute_real_cost
 
@@ -18,7 +18,7 @@ from utils.online_heuristic import compute_real_cost
 
 TIMESTEP_IN_A_DAY = 96
 
-VARIANTS = ['toy', 'standard']
+VARIANTS = ['toy', 'standard', 'cumulative']
 CONTROLLERS = ['rl', 'unify']
 RL_ALGOS = ['saclag']
 
@@ -27,8 +27,8 @@ wandb_running = lambda: wandb.run is not None
 
 ########################################################################################################################
 
-def make_env(variant, instances, controller: str, noise_std_dev: Union[float, int] = 0.01,
-             safety_layer: bool = False):
+def make_env(variant, instances, controller: str, noise_std_dev: Union[float, int] = 0.01, vector: bool = False,
+             safety_layer: bool = False, wandb_log: bool = True):
     # FIXME: the filepath should not be hardcoded
     predictions_filepath = os.path.join('data', 'Dataset10k.csv')
     prices_filepath = os.path.join('data', 'gmePrices.npy')
@@ -69,11 +69,22 @@ def make_env(variant, instances, controller: str, noise_std_dev: Union[float, in
                              noise_std_dev=noise_std_dev,
                              savepath=None,
                              use_safety_layer=safety_layer,
-                             bound_storage_in=False)  # FIXME should not be hardcoded
+                             bound_storage_in=False,
+                             wandb_log=wandb_log)  # FIXME should not be hardcoded
+    elif variant == 'cumulative':
+        env = CumulativeVPPEnv(predictions=train_predictions,
+                               shift=shift,
+                               c_grid=c_grid,
+                               controller=controller,
+                               noise_std_dev=noise_std_dev,
+                               savepath=None,
+                               use_safety_layer=safety_layer,
+                               wandb_log=wandb_log)
     else:
         raise ValueError(f'Variant name must be in {VARIANTS}')
     print(f'Selected variant: {variant}')
-    env = gymnasium.vector.SyncVectorEnv([lambda: env])
+    if vector:
+        env = gymnasium.vector.SyncVectorEnv([lambda: env])
     env = gymnasium.wrappers.RecordEpisodeStatistics(env)
 
     return env
@@ -124,7 +135,7 @@ def train_loop(agent, env, num_epochs, batch_size,
             if wandb_running():
                 if 'episode' in info:
                     episode += 1
-                    wandb.log({'episode': episode,
+                    wandb.log({'train/episode': episode,
                                'train/score': info['episode']['r'],
                                'train/length': info['episode']['l']})
             s_t = s_tp1
@@ -181,7 +192,7 @@ def test_agent(agent, test_env, render_plots=True, save_path=None):
                           display=False,
                           savepath=save_path,
                           wandb_log=agent.is_logging)
-    return np.sum(scores), np.mean(constraint_rewards)
+    return np.sum(scores), np.sum(constraint_rewards)
 
 
 ########################################################################################################################
@@ -199,28 +210,44 @@ def train_rl_algo(variant: str = None,
                   act_learning_rate: float = 7e-4,
                   alpha_learning_rate: float = 7e-4,
                   lambda_learning_rate: float = 1e-3,
-                  fc_params: list = [256, 256],
+                  fc_params: tuple = (256, 256),
                   rollout_steps: int = 1,
                   train_steps: int = 1,
                   log_dir: str = 'output',
                   wandb_params: dict = None,
                   test_every: int = 200,
                   n_envs: int = 1,
-                  tau: float = 0.001,
+                  tau: float = 0.01,
                   target_update_period: int = 10,
                   **kwargs):
     """
     Training routine.
     :param variant: string; choose among one of the available methods.
+    :param algo: string; base RL algorithm to be used ('saclag')
+    :param controller: string; either 'rl' or 'unify'.
+    :param safety_layer: bool; whether to use the safety layer at training time.
+    :param act_learning_rate: float; learning rate for the actor.
+    :param crit_learning_rate: float; learning rate for the critic.
+    :param alpha_learning_rate: float; learning rate for the entropy parameter.
+    :param lambda_learning_rate: float; learning rate for the lagrangian multiplier.
     :param instances: float or list of int; fraction or indexes of the instances to be used for test.
-    :param epochs: int; number of training epochs.
+    :param epochs: int; total number of training steps.
     :param noise_std_dev: float; standard deviation for the additive gaussian noise.
     :param batch_size: int; batch size.
+    :param target_update_period: int; number of training steps between target network updates.
+    :param tau: float; soft update coefficient for target networks.
+    :param n_envs: int; number of parallel environments (only n=1 is supported at the moment).
+    :param test_every: int; number of steps between test episodes.
+    :param wandb_params: dict; parameters to be logged on wandb.
+    :param log_dir: string; directory where to save the logs.
+    :param train_steps: int; number of training steps for each rollout.
+    :param rollout_steps: int; number of rollout steps.
+    :param fc_params: iterable of int; number of neurons for each hidden layer.
     :return:
     """
 
-    env = make_env(variant, instances, controller, noise_std_dev, safety_layer=safety_layer)
-    test_env = make_env(variant, instances, controller, noise_std_dev,
+    env = make_env(variant, instances, controller, noise_std_dev, safety_layer=safety_layer, vector=True)
+    test_env = make_env(variant, instances, controller, noise_std_dev, wandb_log=False,
                         safety_layer=(controller == 'rl'))  # turn on safety layer during testing only for rl approaches
 
     # Get observation and action spaces
@@ -228,7 +255,10 @@ def train_rl_algo(variant: str = None,
     act_space = getattr(env, 'single_action_space', env.action_space)
     state_shape = obs_space.shape
     action_shape = act_space.shape
-    bounds = (-1.0, 1.0)  # TODO okay for unify also?
+    if controller == 'rl':
+        bounds = (-1.0, 1.0)
+    else:
+        bounds = (-10., 10.)  # TODO okay?
     a_net = networks.PolicyNetwork(state_shape, action_shape, fc_params=fc_params,
                                    output='gaussian', bounds=bounds, activation='relu',
                                    out_params={'state_dependent_std': True,
@@ -254,11 +284,12 @@ def train_rl_algo(variant: str = None,
         agent = SACLagEMS(state_shape, action_shape, buffer='uniform', gamma=1.0, reward_shape=reward_shape,
                           actor=a_net, critics=q_nets, tau=tau, target_update_period=target_update_period,
                           actor_opt=a_opt, critic_opt=c_opt, alpha_opt=alpha_opt, lambda_opt=lambda_opt,
-                          wandb_params=wandb_params, save_dir=log_dir, log_dict=log_dict)
+                          wandb_params=wandb_params, save_dir=log_dir, log_dict=log_dict, initial_lambda=5.)
 
     else:
         raise Exception("algo is SACLag")
-    agent.init(envs=env, rollout_steps=rollout_steps, min_memories=2000)
+    agent.init(envs=make_env(variant, instances, controller, noise_std_dev, safety_layer=safety_layer, wandb_log=False, vector=True),
+               rollout_steps=rollout_steps, min_memories=2000)
     agent = train_loop(agent=agent, env=env, num_epochs=epochs, batch_size=batch_size, rollout_steps=rollout_steps,
                        train_steps=train_steps, test_every=test_every, test_env=test_env)
     test_agent(agent, test_env, render_plots=False)

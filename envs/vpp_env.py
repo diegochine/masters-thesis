@@ -2,13 +2,14 @@ import random
 from datetime import datetime, timedelta
 from typing import List, Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from gymnasium import Env
 import gurobipy
 from gurobipy import GRB
 from tabulate import tabulate
-
+import wandb
 
 ########################################################################################################################
 
@@ -35,7 +36,8 @@ class VPPEnv(Env):
                  controller: str,
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
-                 use_safety_layer: bool = False):
+                 use_safety_layer: bool = False,
+                 wandb_log: bool = True):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -77,6 +79,9 @@ class VPPEnv(Env):
         self.use_safety_layer = use_safety_layer
         self._min_rewards = [self.MIN_REWARD * 0.98 ** i for i in range(self.N)]
         self._create_instance_variables()
+
+        # bool to toogle logging
+        self._wandb_log = wandb_log
 
     @staticmethod
     def instances_preprocessing(instances: pd.DataFrame) -> pd.DataFrame:
@@ -175,6 +180,10 @@ class VPPEnv(Env):
         # Reset SL counter
         self.sl_counter = 0
 
+        # Reset the actions' history
+        self.history = dict(energy_bought=[], energy_sold=[], diesel_power=[],
+                            input_storage=[], output_storage=[], storage_capacity=[])
+
     def step(self, action: np.array):
         """
         Step function of the Gym environment.
@@ -182,6 +191,19 @@ class VPPEnv(Env):
         :return:
         """
         raise NotImplementedError()
+
+    def _clear(self):
+        """
+        Clear all the instance variables.
+        """
+        raise NotImplementedError('Subclasses must implement _clear() method')
+
+    def _get_observations(self) -> tuple[np.array, dict[str, Any]]:
+        """
+        Get the observations for the agent.
+        :return: tuple(numpy.array, dict); array is pv and load values for the current instance, dict is info
+        """
+        raise NotImplementedError('Subclasses must implement _get_observations() method')
 
     def reset(self,
               seed: int | None = None,
@@ -220,3 +242,18 @@ class VPPEnv(Env):
         :return:
         """
         pass
+
+    def log(self, **kwargs):
+        """
+        Logs training info using wandb.
+        :return:
+        """
+        if self._wandb_log:
+            fig, axes = plt.subplots(3, 2, figsize=(20, 15))
+            axes = axes.reshape(-1)
+            means = dict()
+            for ax, (k, hist) in enumerate(self.history.items()):
+                means[f'actions/avg_{k}'] = np.mean(hist)
+                axes[ax].plot(hist)
+                axes[ax].set_title(f'{k} (avg: {means[f"actions/avg_{k}"]:>3.0f})', y=0.9)
+            wandb.log({'actions/chart': fig, **means, **kwargs})

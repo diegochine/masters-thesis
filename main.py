@@ -15,7 +15,8 @@ def get_args_dict():
     parser.add_argument("logdir", type=str, help="Logging directory")
     parser.add_argument("-v", "--variant", type=str, choices=VARIANTS,
                         help="'toy': toy variant of the vpp problem (no battery);"
-                             "'standard': standard variant of the vpp problem;")
+                             "'standard': standard variant of the vpp problem;"
+                             "'cumulative': vpp problem with cumulative constraint on the battery")
     parser.add_argument("-a", "--algo", type=str, choices=RL_ALGOS, default='SACLag',
                         help="Offline RL algorithms to use, 'SACLag'")
     parser.add_argument("-c", "--controller", type=str, choices=CONTROLLERS,
