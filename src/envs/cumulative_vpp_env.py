@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from gymnasium.spaces import Box
 
-from envs.standard_vpp_env import StandardVPPEnv
+from src.envs.standard_vpp_env import StandardVPPEnv
 
 
 class CumulativeVPPEnv(StandardVPPEnv):
@@ -35,6 +35,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
         :param savepath: string; if not None, the gurobi models are saved to this directory.
         :param use_safety_layer: bool, if True enable safety layer during training.
         :param cumulative_storage_bound: float; the coefficient of the cumulative constraint.
+               The cumulative constraint states that on average storage capacity should be >= cumulative_storage_bound.
         """
 
         super().__init__(predictions=predictions,
@@ -55,6 +56,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
             self.action_space = Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
         # Coefficient of the cumulative constraint,
         # i.e. on average storage capacity should be >= cumulative_storage_bound
+        assert 0 <= cumulative_storage_bound <= 1, f'cumulative_storage_bound must be in [0, 1], received: {cumulative_storage_bound}'
         self.cumulative_storage_bound = cumulative_storage_bound
 
     def _solve_rl(self, action: np.array) -> Tuple[bool, int | float, np.array, float]:
@@ -65,7 +67,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
         """
         raise NotImplementedError()
 
-    def step(self, action: np.array) -> Tuple[np.array, int | float, bool, bool, dict]:
+    def step(self, action: np.array) -> Tuple[np.array, np.ndarray, bool, bool, dict]:
         """
         This is a step performed in the environment: the virtual costs are set by the agent.py and then the total cost
         (the reward) is computed.
@@ -77,9 +79,13 @@ class CumulativeVPPEnv(StandardVPPEnv):
         """
         observations, reward, terminated, truncated, info = super().step(action)
         if self.timestep == self.N:
-            violation = np.mean(self.history['storage_capacity']) - (self.cap_max * self.cumulative_storage_bound)
-            info['constraint_violation'] = min(0., violation)
+            # As we need constraint in the form E[Z] <= b, we consider average free storage insted of occupied storage
+            # i.e. E[cap(t)] >= c can be rewritten as E[cap_max - cap(t)] <= 1 - c
+            free_storage = self.cap_max - np.mean(self.history['storage_capacity'])
+            # storage is in [0, cap_max] but c is in [0, 1]
+            violation = max(0., free_storage - ((1 - self.cumulative_storage_bound) * self.cap_max))
         else:
-            info['constraint_violation'] = 0.
+            violation = 0.
+        reward = np.array([reward[0], violation])
 
         return observations, reward, terminated, truncated, info

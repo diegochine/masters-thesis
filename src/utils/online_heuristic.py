@@ -2,7 +2,6 @@
     Utility functions to invoke the greedy heuristic and evaluate the solutions.
 """
 
-import gurobipy
 import wandb
 from gurobipy import GRB
 from gurobipy import Model
@@ -15,7 +14,7 @@ from typing import Union, Tuple, List
 import warnings
 import argparse
 import os
-from envs.vpp_env import VPPEnv
+from src.envs.vpp_env import VPPEnv
 
 ########################################################################################################################
 

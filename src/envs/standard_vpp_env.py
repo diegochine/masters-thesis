@@ -5,7 +5,7 @@ import pandas as pd
 from gurobipy import Model, GRB
 from gymnasium.spaces import Box
 
-from envs.safety_layer_vpp_env import SafetyLayerVPPEnv
+from src.envs.safety_layer_vpp_env import SafetyLayerVPPEnv
 
 
 class StandardVPPEnv(SafetyLayerVPPEnv):
@@ -88,7 +88,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         self.cumulative_cost = 0
 
         self.history = dict(energy_bought=[], energy_sold=[], diesel_power=[],
-                            input_storage=[], output_storage=[], storage_capacity=[])
+                            input_storage=[], output_storage=[], storage_capacity=[],
+                            c_virt=[])
 
     def _solve_rl(self, action: np.array) -> Tuple[bool, int | float, np.array, float]:
         """
@@ -221,9 +222,9 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         grid_in = mod.getVarByName('p_grid_in').X
         grid_out = mod.getVarByName('p_grid_out').X
 
-        constraint_violation = min(0, 200 - storage_in)
+        constraint_violation = max(0., storage_in - 200.)
 
-        if constraint_violation < 0:  # storage_in bound constraint has been violated
+        if constraint_violation > 0.:  # storage_in bound constraint has been violated
             if self.use_safety_layer:
                 feasible_action = self.safety_layer((storage_in, storage_out, grid_in, diesel_power))
                 storage_in, storage_out, grid_in, diesel_power = feasible_action
@@ -231,7 +232,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                 grid_out = tilde_cons - self.p_ren_pv_real[
                     self.timestep] - storage_out - diesel_power + storage_in + grid_in
             else:
-                grid_out = 1000.
+                feasible = False
                 feasible_action = None
         else:
             assert feasible  # TODO check
@@ -245,7 +246,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
             feasible_action = np.array([storage_in, storage_out, grid_in, diesel_power], dtype=np.float64)
 
             # update history
-            for k, v in (('energy_bought', grid_out), ('energy_sold', grid_in), ('diesel_power', diesel_power),
+            for k, v in (('c_virt', c_virt), ('energy_bought', grid_out), ('energy_sold', grid_in), ('diesel_power', diesel_power),
                          ('input_storage', storage_in), ('output_storage', storage_out), ('storage_capacity', old_cap_x)):
                 self.history[k].append(v)
 
@@ -287,10 +288,10 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
             assert self.storage is not None, 'Storage variable must be initialized'
 
     def rescale(self, action, to_network_range=False):
-        """Public method for rescaling actions, either from network range (e.g. (-1, 1)) to env range or vice versa.
+        """Public method for rescaling actions, either from network range (e.g. (-1, 1)) to environment range or vice versa.
         Args:
             action: np.array, action to be rescaled.
-            to_network_range: (Optional) if True, rescales from env range to network range; otherwise performs the opposite
+            to_network_range: (Optional) if True, rescales from environment range to network range; otherwise performs the opposite
                 rescaling. Defaults to False.
         """
         net_lb = np.full(4, -1.)
@@ -306,7 +307,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
             action = std * (env_ub - env_lb) + env_lb
         return action
 
-    def step(self, action: np.array) -> Tuple[np.array, int | float, bool, bool, dict]:
+    def step(self, action: np.array) -> Tuple[np.array, np.ndarray, bool, bool, dict]:
         """
         This is a step performed in the environment: the virtual costs are set by the agent.py and then the total cost
         (the reward) is computed.
@@ -336,11 +337,11 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         else:
             reward = -cost
             terminated = (self.timestep == self.N)
+        reward = np.array([reward, constraint_violation])
 
         if terminated or truncated:
             self.log()
 
         return observations, reward, terminated, truncated, {'feasible': feasible,
                                                              'action': actual_action,
-                                                             'sl_usage': self.sl_counter / self.timestep,
-                                                             'constraint_violation': constraint_violation}
+                                                             'sl_usage': self.sl_counter / self.timestep}

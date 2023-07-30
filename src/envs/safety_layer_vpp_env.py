@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from gurobipy import Model, GRB
 
-import envs
+from src import envs
 
 
 class SafetyLayerVPPEnv(envs.VPPEnv):

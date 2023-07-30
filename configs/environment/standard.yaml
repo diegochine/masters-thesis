@@ -1,0 +1,13 @@
+max_steps: 96
+variant: standard
+controller: unify
+safety_layer: False
+
+predictions_path: ${hydra:runtime.cwd}/data/Dataset10k.csv
+prices_path: ${hydra:runtime.cwd}/data/gmePrices.npy
+shifts_path: ${hydra:runtime.cwd}/data/optShift.npy
+instances:
+  - 2732
+
+reward_loc: 0
+reward_scale: 0.05

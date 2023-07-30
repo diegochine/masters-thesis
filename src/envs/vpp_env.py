@@ -8,6 +8,7 @@ import pandas as pd
 from gymnasium import Env
 import gurobipy
 from gurobipy import GRB
+from gymnasium.spaces import Box
 from tabulate import tabulate
 import wandb
 
@@ -20,7 +21,7 @@ class VPPEnv(Env):
     """
 
     # Reward for unfeasible actions
-    MIN_REWARD = -1000
+    MIN_REWARD = -2000
     # Number of timesteps in one day
     N = 96
 
@@ -48,9 +49,6 @@ class VPPEnv(Env):
         :param use_safety_layer: bool; if True, use safety layer during training.
         """
 
-        # Set numpy random seed to ensure reproducibility
-        np.random.seed(0)
-
         # Counter of safety layer usage
         self.sl_counter = 0
 
@@ -77,11 +75,14 @@ class VPPEnv(Env):
 
         self.savepath = savepath
         self.use_safety_layer = use_safety_layer
-        self._min_rewards = [self.MIN_REWARD * 0.98 ** i for i in range(self.N)]
+        self._min_rewards = [self.MIN_REWARD * 0.99 ** i for i in range(self.N)]
         self._create_instance_variables()
 
         # bool to toogle logging
         self._wandb_log = wandb_log
+
+        # needed by torchrl
+        self.reward_space = Box(low=np.array([-np.inf, -np.inf]), high=np.array([np.inf, np.inf]), shape=(2,), dtype=np.float32)
 
     @staticmethod
     def instances_preprocessing(instances: pd.DataFrame) -> pd.DataFrame:
@@ -182,7 +183,8 @@ class VPPEnv(Env):
 
         # Reset the actions' history
         self.history = dict(energy_bought=[], energy_sold=[], diesel_power=[],
-                            input_storage=[], output_storage=[], storage_capacity=[])
+                            input_storage=[], output_storage=[], storage_capacity=[],
+                            c_virt=[])
 
     def step(self, action: np.array):
         """
@@ -248,12 +250,13 @@ class VPPEnv(Env):
         Logs training info using wandb.
         :return:
         """
-        if self._wandb_log:
+        if self._wandb_log and wandb.run is not None:
             fig, axes = plt.subplots(3, 2, figsize=(20, 15))
             axes = axes.reshape(-1)
             means = dict()
             for ax, (k, hist) in enumerate(self.history.items()):
                 means[f'actions/avg_{k}'] = np.mean(hist)
-                axes[ax].plot(hist)
-                axes[ax].set_title(f'{k} (avg: {means[f"actions/avg_{k}"]:>3.0f})', y=0.9)
+                if k != 'c_virt':
+                    axes[ax].plot(hist)
+                    axes[ax].set_title(f'{k} (avg: {means[f"actions/avg_{k}"]:>3.0f})', y=0.9)
             wandb.log({'actions/chart': fig, **means, **kwargs})

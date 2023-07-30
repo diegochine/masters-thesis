@@ -1,0 +1,14 @@
+algo: "ppolag"
+
+loss_module:
+  clip_epsilon: 0.2
+  entropy_coef: 0.0
+  entropy_bonus: False
+  critic_coef: 0.5
+  gamma: 0.99
+  initial_lagrangian: 1.0
+  loss_critic_type: "smooth_l1"
+
+estimator:
+  gamma: 0.99
+  lmbda: 0.95
