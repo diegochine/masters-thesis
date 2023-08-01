@@ -96,12 +96,12 @@ class VPPEnv(Env):
         assert 'Load(kW)' in instances.keys(), "Load(kW) must be in the dataframe columns"
 
         # Instances pv from file
-        instances['PV(kW)'] = instances['PV(kW)'].map(lambda entry: entry[1:-1].split())
-        instances['PV(kW)'] = instances['PV(kW)'].map(lambda entry: list(np.float_(entry)))
+        instances.loc[:, 'PV(kW)'] = instances['PV(kW)'].map(lambda entry: entry[1:-1].split())
+        instances.loc[:, 'PV(kW)'] = instances['PV(kW)'].map(lambda entry: list(np.float_(entry)))
 
         # Instances load from file
-        instances['Load(kW)'] = instances['Load(kW)'].map(lambda entry: entry[1:-1].split())
-        instances['Load(kW)'] = instances['Load(kW)'].map(lambda entry: list(np.float_(entry)))
+        instances.loc[:, 'Load(kW)'] = instances['Load(kW)'].map(lambda entry: entry[1:-1].split())
+        instances.loc[:, 'Load(kW)'] = instances['Load(kW)'].map(lambda entry: list(np.float_(entry)))
 
         return instances
 

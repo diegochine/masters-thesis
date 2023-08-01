@@ -18,7 +18,7 @@ training:
   lr: 0.002
   max_grad_norm: 0.5
   frames_per_batch: 1600  # Number of frames collected for each rollout
-  iterations: 20    # Total number of training iterations
+  iterations: 50    # Total number of training iterations
   num_epochs: 5     # Number of epochs per batch of data
   batch_size: 160   # Sub-batch size used within each epoch
 

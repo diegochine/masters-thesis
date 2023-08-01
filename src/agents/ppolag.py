@@ -68,13 +68,13 @@ class PPOLagLoss(ClipPPOLoss):
         td_out.set("lagrangian", self.lagrangian)
 
         # compute advantages for both critics
-        tmp_td = tmp_td.set(('next', 'reward'), tdict.get(('next', 'norm_reward'))[:, :1])
+        tmp_td = tmp_td.set(('next', 'reward'), tdict.get(('next', 'reward'))[:, :1])
         self.r_value_estimator(
             tmp_td,
             params=self.critic_params.detach(),
             target_params=self.target_critic_params,
         )
-        tmp_td = tmp_td.set(('next', 'reward'), tdict.get(('next', 'norm_reward'))[:, 1:])
+        tmp_td = tmp_td.set(('next', 'reward'), tdict.get(('next', 'reward'))[:, 1:])
         self.c_value_estimator(
             tmp_td,
             params=self.safe_critic_params.detach(),

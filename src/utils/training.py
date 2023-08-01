@@ -52,6 +52,7 @@ def make_env(device: torch.device,
              iter_init_stats: int = 1000,
              reward_loc: float = 0.,
              reward_scale: float = 1.,
+             t_state_dict: dict | None = None,
              **kwargs):
     if variant == 'toy':
         base_env = SafeGridWorld(grid_size=5)
@@ -108,7 +109,10 @@ def make_env(device: torch.device,
             RewardScaling(reward_loc, reward_scale),  # scale rewards
         ),
     )
-    if iter_init_stats > 0:
+    if t_state_dict is not None:
+        e.transform[0].init_stats(num_iter=3, reduce_dim=0, cat_dim=0)
+        e.transform[0].load_state_dict(t_state_dict)
+    elif iter_init_stats > 0:
         e.transform[0].init_stats(num_iter=iter_init_stats, reduce_dim=0, cat_dim=0)
     # print("normalization constant shape:", e.transform[0].loc.shape)
     # print("observation_spec:", e.observation_spec)
@@ -245,7 +249,7 @@ def train_loop(cfg, collector, device, eval_env, logs, loss_module, optim, pbar,
                     f"max steps = {train_log['train/max_steps']: 2d}"
         with set_exploration_type(ExplorationType.RANDOM), torch.no_grad():
             # execute a rollout with the trained policy
-            eval_rollout = eval_env.rollout(1000, policy_module, break_when_any_done=False)
+            eval_rollout = eval_env.rollout(1000, policy_module)
             dones = (eval_rollout[('next', 'done')] | eval_rollout[('next', 'truncated')])
             rewards = eval_rollout['next', 'episode_reward'][dones.squeeze()]
             avg_score = rewards[:, 0].mean().item()

@@ -52,11 +52,13 @@ def main(cfg: DictConfig):
     ########################################################################################################################
     env = make_env(device=device, wandb_log=False, **cfg.environment)
     loss_module, policy_module, nets = get_agent_modules(env, cfg, device)
+    t_state_dict = env.transform[0].state_dict()
     del env
 
     collector = MultiSyncDataCollector(
         create_env_fn=[make_env] * cfg.training.num_envs,
-        create_env_kwargs=[{'device': device, **cfg.environment}] * cfg.training.num_envs,  # TODO pr torchrl to fix this
+        create_env_kwargs=[{'device': device, 't_state_dict': t_state_dict,
+                            **cfg.environment}] * cfg.training.num_envs,  # TODO pr torchrl to fix this
         policy=policy_module,
         frames_per_batch=cfg.training.frames_per_batch,
         total_frames=total_frames,
@@ -69,7 +71,7 @@ def main(cfg: DictConfig):
         prefetch=cfg.training.num_epochs,
     )
 
-    eval_env = make_env(device=device, **cfg.environment)
+    eval_env = make_env(device=device, t_state_dict=t_state_dict, **cfg.environment)
     eval_env.reset()
 
     optim = torch.optim.Adam(loss_module.parameters(), cfg.training.lr)
