@@ -137,11 +137,11 @@ def get_agent_modules(env, cfg, device):
                 out_features=2 * env.action_spec.shape[-1],
                 device=device,
                 activation_class=nn.ReLU,
-                **cfg.actor_net_spec),
+                **cfg.actor.net_spec),
             NormalParamExtractor(),
         )
         # initialize last layer of actor_net to produce actions close to zero at the beginning
-        torch.nn.init.uniform_(actor_net[0][-1].weight, -3e-3, 3e-3)
+        torch.nn.init.uniform_(actor_net[0][-1].weight, -1e-3, 1e-3)
         policy_module = ProbabilisticActor(
             module=TensorDictModule(
                 module=actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
@@ -150,21 +150,23 @@ def get_agent_modules(env, cfg, device):
             in_keys=["loc", "scale"],
             distribution_class=TanhNormal,
             distribution_kwargs={
-                "min": -1,  # environment.action_spec.space.minimum,
-                "max": 1,  # environment.action_spec.space.maximum,
+                "min": cfg.actor.distribution_min,
+                "max": cfg.actor.distribution_max,
             },
             return_log_prob=True,  # we'll need the log-prob for the numerator of the importance weights
             default_interaction_type=ExplorationType.RANDOM,
         )
         critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=nn.ReLU,
-                         **cfg.value_net_spec)
+                         **cfg.critic.net_spec)
         r_value_module = ValueOperator(
             module=critic_net,
             in_keys=["observation"],
             out_keys=["r_state_value"],
         )
         safe_critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=nn.ReLU,
-                              **cfg.value_net_spec)
+                              # ensure cost critic only outputs positive values by adding final ReLU
+                              activate_last_layer=cfg.critic.constraint_activation,
+                              **cfg.critic.net_spec)
         c_value_module = ValueOperator(
             module=safe_critic_net,
             in_keys=["observation"],
@@ -232,22 +234,25 @@ def train_loop(cfg, collector, device, eval_env, logs, loss_module, optim, pbar,
                 optim.zero_grad()
                 # Log the losses and debug info
                 if cfg.wandb.use_wandb:
-                    batch_log = {f"{'train/' if k.startswith('loss_') else 'debug/'}{k}": loss_info[k].item()
-                                 for k in loss_info.keys()}
+                    batch_log = {f"{'train' if k.startswith('loss_') else 'debug'}/{k}":
+                                     (v.item() if v.numel() == 1 else v.numpy())  # to log both scalars and arrays
+                                 for k, v in loss_info.items()}
                     wandb.log(batch_log)
 
         train_log = {'train/iteration': i,
                      'train/avg_score': avg_score,
                      'train/avg_violation': avg_violation,
                      'train/max_steps': tensordict_data["step_count"].max().item(),
-                     'lr': optim.param_groups[0]["lr"]}
+                     'debug/actor_lr': optim.param_groups[0]["lr"],
+                     'debug/critic_lr': optim.param_groups[1]["lr"],
+                     'debug/lag_lr': optim.param_groups[2]["lr"]}
 
         logs["reward"].append(tensordict_data["next", "reward"].mean().item())
         pbar.update(tensordict_data.numel())
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 4.0f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 4.0f}, " \
                     f"max steps = {train_log['train/max_steps']: 2d}"
-        with set_exploration_type(ExplorationType.RANDOM), torch.no_grad():
+        with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
             # execute a rollout with the trained policy
             eval_rollout = eval_env.rollout(1000, policy_module)
             dones = (eval_rollout[('next', 'done')] | eval_rollout[('next', 'truncated')])

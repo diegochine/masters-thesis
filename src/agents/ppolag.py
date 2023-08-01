@@ -119,6 +119,8 @@ class PPOLagLoss(ClipPPOLoss):
             target, pred,
             loss_function=self.loss_critic_type
         )
+        td_out.set('preds_reward', pred.detach())
+        td_out.set('targets_reward', target.detach())
 
         target = tmp_td.get(self.c_value_target_key)
         pred = self.safe_critic(tmp_td, params=self.safe_critic_params).get(self.c_value_key)
@@ -126,6 +128,8 @@ class PPOLagLoss(ClipPPOLoss):
             target, pred,
             loss_function=self.loss_critic_type
         )
+        td_out.set('preds_constraint', pred.detach())
+        td_out.set('targets_constraint', target.detach())
 
         td_out.set("loss_r_critic", loss_r_critic.mean())
         td_out.set("loss_c_critic", loss_c_critic.mean())

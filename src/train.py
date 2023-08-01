@@ -74,7 +74,11 @@ def main(cfg: DictConfig):
     eval_env = make_env(device=device, t_state_dict=t_state_dict, **cfg.environment)
     eval_env.reset()
 
-    optim = torch.optim.Adam(loss_module.parameters(), cfg.training.lr)
+    optim = torch.optim.Adam([
+        {'params': [p for k, p in loss_module.named_parameters() if 'actor' in k], 'lr': cfg.agent.actor_lr},
+        {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
+        {'params': [p for k, p in loss_module.named_parameters() if 'lag' in k], 'lr': cfg.agent.lag_lr}
+    ], lr=cfg.training.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, 96, 1e-6)
 
     if cfg.wandb.use_wandb:
