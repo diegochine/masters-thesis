@@ -1,22 +1,28 @@
 import os
+from typing import Tuple
 
+import hydra.utils
 import numpy as np
 import pandas as pd
 
 import torch
+import tqdm
 import wandb
-from omegaconf import ListConfig
-from tensordict.nn import NormalParamExtractor, TensorDictModule, set_interaction_type, InteractionType
+from omegaconf import ListConfig, DictConfig
+from tensordict.nn import NormalParamExtractor, TensorDictModule
 from torch import nn
+from torchrl.collectors import DataCollectorBase
+from torchrl.data import TensorDictReplayBuffer
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
     RewardScaling
 from torchrl.envs.libs.gym import GymWrapper
 from torchrl.modules import MLP, ProbabilisticActor, TanhNormal, ValueOperator
+from torchrl.objectives import LossModule
 from torchrl.objectives.value import GAE
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 from src.envs import StandardVPPEnv, CumulativeVPPEnv, SafeGridWorld
-from src.agents import PPOLagLoss
+from src.agents import PPOLagLoss, NaiveLagrange, PIDLagrange
 
 ########################################################################################################################
 
@@ -53,7 +59,25 @@ def make_env(device: torch.device,
              reward_loc: float = 0.,
              reward_scale: float = 1.,
              t_state_dict: dict | None = None,
-             **kwargs):
+             **kwargs) -> TransformedEnv:
+    """Environment factory function.
+        :param device: torch.device to use
+        :param variant: environment variant, one of {toy, standard, cumulative}
+        :param controller: controller type, one of {rl, unify}
+        :param predictions_path: path to predictions file (only for standard and cumulative variants)
+        :param prices_path: path to prices file (only for standard and cumulative variants)
+        :param shifts_path: path to shifts file (only for standard and cumulative variants)
+        :param instances: if float, percentage of test instances; if list, list of test instances;
+                if None, randomly choose an instance
+        :param noise_std_dev: standard deviation of noise
+        :param safety_layer: whether to use safety layer
+        :param wandb_log: whether to log to wandb
+        :param max_steps: maximum number of steps per episode
+        :param iter_init_stats: number of iterations to initialize stats
+        :param reward_loc: reward location (mean)
+        :param reward_scale: reward scale (std dev)
+        :param t_state_dict: state dict of observation normalization; if not provided, initialize stats
+    """
     if variant == 'toy':
         base_env = SafeGridWorld(grid_size=5)
     elif variant in {'standard', 'cumulative'}:
@@ -126,7 +150,14 @@ def make_env(device: torch.device,
 
 ########################################################################################################################
 
-def get_agent_modules(env, cfg, device):
+def get_agent_modules(env: TransformedEnv,
+                      cfg: DictConfig,
+                      device: torch.device) -> (LossModule, ProbabilisticActor, Tuple[nn.Module]):
+    """Creates and initializes agent modules.
+    :param env:
+    :param cfg:
+    :param device:
+    """
     def init_module(module, name):
         print(f"Running {name}:", module(env.reset()))
 
@@ -187,12 +218,19 @@ def get_agent_modules(env, cfg, device):
             advantage_key="c_advantage", value_target_key="c_value_target", value_key='c_state_value',
             **cfg.agent.estimator,
         )
+        if cfg.agent.lagrange.type == 'naive':
+            lagrangian = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value)
+        elif cfg.agent.lagrange.type == 'pid':
+            lagrangian = PIDLagrange(**cfg.agent.lagrange.params)
+        else:
+            raise ValueError(f'Unknown lagrange type {cfg.agent.lagrange}, either naive or pid')
         loss_module = PPOLagLoss(
             actor=policy_module,
             critic=r_value_module,
             safe_critic=c_value_module,
             r_value_estimator=r_advantage_module,
             c_value_estimator=c_advantage_module,
+            lagrangian=lagrangian,
             r_advantage_key=r_advantage_module.advantage_key,
             c_advantage_key=c_advantage_module.advantage_key,
             r_value_target_key=r_advantage_module.value_target_key,
@@ -206,8 +244,28 @@ def get_agent_modules(env, cfg, device):
     return loss_module, policy_module, (actor_net, critic_net, safe_critic_net)
 
 
-def train_loop(cfg, collector, device, eval_env, logs, loss_module, optim, pbar, policy_module, replay_buffer,
-               scheduler):
+def train_loop(cfg: DictConfig,
+               collector: DataCollectorBase,
+               device: torch.device,
+               eval_env: TransformedEnv,
+               loss_module: LossModule,
+               optim: torch.optim.Optimizer,
+               pbar: tqdm.tqdm,
+               policy_module: ProbabilisticActor,
+               replay_buffer: TensorDictReplayBuffer,
+               scheduler: torch.optim.lr_scheduler.LRScheduler) -> None:
+    """Main training loop.
+    :param cfg: hydra config
+    :param collector: torchrl data collector
+    :param device: torch device
+    :param eval_env: evaluation environment
+    :param loss_module: module used to compute the loss
+    :param optim: optimizer
+    :param pbar: tqdm progress bar
+    :param policy_module: policy module object, used for evaluation
+    :param replay_buffer: replay buffer
+    :param scheduler: learning rate scheduler
+    """
     # We iterate over the collector until it reaches the total number of frames it was
     # designed to collect:
     for i, tensordict_data in enumerate(collector):
@@ -223,10 +281,8 @@ def train_loop(cfg, collector, device, eval_env, logs, loss_module, optim, pbar,
             replay_buffer.extend(data_view.cpu())
             for b in range(cfg.training.frames_per_batch // cfg.training.batch_size):
                 subdata = replay_buffer.sample(cfg.training.batch_size)
-                loss_info = loss_module(subdata.to(device),
-                                        train_lagrangian=(epoch + b == 0))  # update lagrangian only on the first step
+                loss_info = loss_module(subdata.to(device))
                 loss_value = sum(loss_info[k] for k in loss_info.keys() if k.startswith('loss_'))
-
                 # Optimization: backward, grad clipping and optim step
                 loss_value.backward()
                 torch.nn.utils.clip_grad_norm_(loss_module.parameters(), cfg.training.max_grad_norm)
@@ -247,7 +303,6 @@ def train_loop(cfg, collector, device, eval_env, logs, loss_module, optim, pbar,
                      'debug/critic_lr': optim.param_groups[1]["lr"],
                      'debug/lag_lr': optim.param_groups[2]["lr"]}
 
-        logs["reward"].append(tensordict_data["next", "reward"].mean().item())
         pbar.update(tensordict_data.numel())
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 4.0f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 4.0f}, " \
@@ -272,6 +327,4 @@ def train_loop(cfg, collector, device, eval_env, logs, loss_module, optim, pbar,
         if cfg.wandb.use_wandb:
             wandb.log({**train_log, **eval_log})
 
-        # We're also using a learning rate scheduler. Like the gradient clipping,
-        # this is a nice-to-have but nothing necessary for PPO to work.
         scheduler.step()

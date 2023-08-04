@@ -8,6 +8,7 @@ import wandb
 from omegaconf import DictConfig, OmegaConf
 from torchrl.collectors import MultiSyncDataCollector
 from torchrl.data import TensorDictReplayBuffer, LazyMemmapStorage
+from torchrl.data.replay_buffers import SamplerWithoutReplacement
 from tqdm import tqdm
 
 from src.utils import VARIANTS, RL_ALGOS, CONTROLLERS
@@ -40,21 +41,26 @@ def get_args_dict():
 
 
 @hydra.main(version_base="1.1", config_path="../configs", config_name="train.yaml")
-def main(cfg: DictConfig):
+def main(cfg: DictConfig) -> None:
+    """
+    Entry point for training.
+    :param cfg: DictConfig; Hydra configuration object.
+    """
 
+    # Set seed
     seed_everything(cfg.seed)
 
+    # Set device and total frames
     device = torch.device(cfg.training.device)
     total_frames = cfg.training.frames_per_batch * cfg.training.iterations
 
-    ########################################################################################################################
-    # ENVIRONMENT
-    ########################################################################################################################
+    # Create env to initialize modules and normalization state dict
     env = make_env(device=device, wandb_log=False, **cfg.environment)
     loss_module, policy_module, nets = get_agent_modules(env, cfg, device)
     t_state_dict = env.transform[0].state_dict()
     del env
 
+    # Create data collector and replay buffer
     collector = MultiSyncDataCollector(
         create_env_fn=[make_env] * cfg.training.num_envs,
         create_env_kwargs=[{'device': device, 't_state_dict': t_state_dict,
@@ -67,8 +73,9 @@ def main(cfg: DictConfig):
     )
     replay_buffer = TensorDictReplayBuffer(
         batch_size=cfg.training.batch_size,
-        storage=LazyMemmapStorage(cfg.training.frames_per_batch * 2),
+        storage=LazyMemmapStorage(cfg.training.frames_per_batch),
         prefetch=cfg.training.num_epochs,
+        sampler=SamplerWithoutReplacement()  # for PPO only, ensures the entire dataset is used
     )
 
     eval_env = make_env(device=device, t_state_dict=t_state_dict, **cfg.environment)
@@ -81,8 +88,8 @@ def main(cfg: DictConfig):
     ], lr=cfg.training.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, 96, 1e-6)
 
+    # Initialize wandb
     if cfg.wandb.use_wandb:
-        # Initialize wandb
         tags = [cfg.agent.algo, cfg.environment.controller] + (['safety_layer'] if cfg.environment.safety_layer else [])
         tags += list(map(lambda i: str(i), OmegaConf.to_object(cfg.environment.instances)))
         wandb_cfg = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
@@ -101,11 +108,9 @@ def main(cfg: DictConfig):
     # TRAINING LOOP
     ########################################################################################################################
 
-    logs = defaultdict(list)
     pbar = tqdm(total=total_frames, desc="Training", unit=" frames")
 
-    train_loop(cfg, collector, device, eval_env, logs, loss_module, optim, pbar, policy_module, replay_buffer,
-               scheduler)
+    train_loop(cfg, collector, device, eval_env, loss_module, optim, pbar, policy_module, replay_buffer, scheduler)
     collector.shutdown()
     pbar.close()
 

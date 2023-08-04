@@ -1,4 +1,16 @@
 algo: "ppolag"
+lagrange:
+  type: naive
+  params:
+    initial_value: 1.0
+    kp: 0.05
+    ki: 0.0005
+    kd: 0.1
+    d_delay: 5
+    alpha_p: 0.5
+    alpha_d: 0.5
+    cost_limit: 0.0
+    proj: "relu"
 
 actor_lr: 0.01
 critic_lr: 0.01
@@ -10,8 +22,9 @@ loss_module:
   entropy_bonus: False
   critic_coef: 0.5
   gamma: 0.99
-  initial_lagrangian: 5.0
   loss_critic_type: "smooth_l1"
+  normalize_advantage: True
+  lagrangian_delay: 10
 
 estimator:
   gamma: 0.99

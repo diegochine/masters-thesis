@@ -15,15 +15,15 @@ critic:
   net_spec:
     num_cells: 32
     depth: 2
-  constraint_activation: True  # if True, use ReLU activation on the output of the safety critic
+  constraint_activation: False  # if True, use ReLU activation on the output of the safety critic
 
 training:
   device: "cpu"
-  num_envs: 4
+  num_envs: 8
   lr: 0.002
   max_grad_norm: 0.5
   frames_per_batch: 3200  # Number of frames collected for each rollout
-  iterations: 50    # Total number of training iterations
+  iterations: 100    # Total number of training iterations
   num_epochs: 5     # Number of epochs per batch of data
   batch_size: 320   # Sub-batch size used within each epoch
 
