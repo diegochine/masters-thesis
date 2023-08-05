@@ -1,19 +1,19 @@
 algo: "ppolag"
 lagrange:
-  type: naive
+  type: pid
   params:
     initial_value: 1.0
-    kp: 0.05
+    kp: 0.01
     ki: 0.0005
     kd: 0.1
     d_delay: 5
-    alpha_p: 0.5
-    alpha_d: 0.5
-    cost_limit: 0.0
+    alpha_p: 0.1
+    alpha_d: 0.1
+    cost_limit: 0
     proj: "relu"
 
 actor_lr: 0.01
-critic_lr: 0.01
+critic_lr: 0.005
 lag_lr: 0.05
 
 loss_module:
@@ -24,7 +24,7 @@ loss_module:
   gamma: 0.99
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
-  lagrangian_delay: 10
+  lagrangian_delay: 100
 
 estimator:
   gamma: 0.99

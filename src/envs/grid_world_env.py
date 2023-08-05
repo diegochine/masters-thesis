@@ -38,11 +38,13 @@ class SafeGridWorld(Env):
         return np.linalg.norm(self.goal_cell - self.agent_position)
 
     def step(self, action):
+        # clip action to prevent agent exploiting the environment (i.e. winning in one step)
+        action = np.clip(action, -1., 1.)
         # Move the agent according to the continuous action
         self.agent_position = np.clip((self.agent_position + action), 0., self.grid_size - 1)
 
         # Calculate reward and cost based on agent's new position
-        score = -1.  # Cost for each step
+        score = -1. if action.sum() >= 0.5 else -2.  # Cost for each step, penalize small actions
         constraint_violation = 0.
         done = False
 
@@ -51,7 +53,7 @@ class SafeGridWorld(Env):
         if np.linalg.norm(self.goal_cell - self.agent_position) <= 1.0:
             score = 0.  # Agent reached the goal, reward is 0
             done = True
-        elif nearest_bomb <= 0.5:
+        if nearest_bomb <= 0.5:
             constraint_violation = 1.  # Agent stepped on a bomb, additional safety cost
 
         reward = np.array([score, constraint_violation])

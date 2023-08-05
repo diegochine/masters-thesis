@@ -1,7 +1,6 @@
 import os
 from typing import Tuple
 
-import hydra.utils
 import numpy as np
 import pandas as pd
 
@@ -16,7 +15,7 @@ from torchrl.data import TensorDictReplayBuffer
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
     RewardScaling
 from torchrl.envs.libs.gym import GymWrapper
-from torchrl.modules import MLP, ProbabilisticActor, TanhNormal, ValueOperator
+from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal
 from torchrl.objectives import LossModule
 from torchrl.objectives.value import GAE
 from torchrl.envs.utils import ExplorationType, set_exploration_type
@@ -111,7 +110,7 @@ def make_env(device: torch.device,
                                       use_safety_layer=safety_layer,
                                       bound_storage_in=False,
                                       wandb_log=wandb_log)
-        elif variant == 'cumulative':
+        else:
             base_env = CumulativeVPPEnv(predictions=train_predictions,
                                         shift=shift,
                                         c_grid=c_grid,
@@ -123,27 +122,24 @@ def make_env(device: torch.device,
     else:
         raise ValueError(f'Variant name must be in {VARIANTS}')
 
+    # Make torchrl env with transforms
     torchrl_env = GymWrapper(base_env, device=device)
-    e = TransformedEnv(
-        torchrl_env,
-        Compose(
-            ObservationNorm(in_keys=["observation"]),  # normalize observations
-            StepCounter(max_steps=max_steps),  # maximum steps per episode
-            RewardSum(),  # track sum of rewards over episodes
-            RewardScaling(reward_loc, reward_scale),  # scale rewards
-        ),
-    )
+    transforms = [
+        ObservationNorm(in_keys=["observation"]),  # normalize observations
+        StepCounter(max_steps=max_steps),  # maximum steps per episode
+        RewardSum(),  # track sum of rewards over episodes
+    ]
+    if reward_loc != 0. or reward_scale != 1.:
+        transforms.append(RewardScaling(reward_loc, reward_scale))  # scale rewards
+
+    e = TransformedEnv(torchrl_env, Compose(*transforms))
+
+    # Initialize normalizations stats
     if t_state_dict is not None:
         e.transform[0].init_stats(num_iter=3, reduce_dim=0, cat_dim=0)
         e.transform[0].load_state_dict(t_state_dict)
     elif iter_init_stats > 0:
         e.transform[0].init_stats(num_iter=iter_init_stats, reduce_dim=0, cat_dim=0)
-    # print("normalization constant shape:", e.transform[0].loc.shape)
-    # print("observation_spec:", e.observation_spec)
-    # print("reward_spec:", e.reward_spec)
-    # print("done_spec:", e.done_spec)
-    # print("action_spec:", e.action_spec)
-    # print("state_spec:", environment.state_spec)
     check_env_specs(e)
     return e
 
@@ -158,6 +154,7 @@ def get_agent_modules(env: TransformedEnv,
     :param cfg:
     :param device:
     """
+
     def init_module(module, name):
         print(f"Running {name}:", module(env.reset()))
 
@@ -179,11 +176,7 @@ def get_agent_modules(env: TransformedEnv,
             ),
             spec=env.action_spec,
             in_keys=["loc", "scale"],
-            distribution_class=TanhNormal,
-            distribution_kwargs={
-                "min": cfg.actor.distribution_min,
-                "max": cfg.actor.distribution_max,
-            },
+            distribution_class=IndependentNormal,
             return_log_prob=True,  # we'll need the log-prob for the numerator of the importance weights
             default_interaction_type=ExplorationType.RANDOM,
         )
@@ -219,7 +212,8 @@ def get_agent_modules(env: TransformedEnv,
             **cfg.agent.estimator,
         )
         if cfg.agent.lagrange.type == 'naive':
-            lagrangian = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value)
+            lagrangian = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
+                                       cost_limit=cfg.agent.lagrange.params.cost_limit)
         elif cfg.agent.lagrange.type == 'pid':
             lagrangian = PIDLagrange(**cfg.agent.lagrange.params)
         else:
@@ -266,16 +260,16 @@ def train_loop(cfg: DictConfig,
     :param replay_buffer: replay buffer
     :param scheduler: learning rate scheduler
     """
-    # We iterate over the collector until it reaches the total number of frames it was
-    # designed to collect:
+    # Iterate over the collector until it reaches frames_per_batch frames
     for i, tensordict_data in enumerate(collector):
-        # we now have a batch of data to work with. Let's learn something from it.
+        # get dones to compute average cumulative reward and constraint violation
         dones = (tensordict_data[('next', 'done')] | tensordict_data[('next', 'truncated')])
         rewards = tensordict_data['next', 'episode_reward'][dones.squeeze()]
         avg_score = rewards[:, 0].mean().item()
         # We need the average violation to update the lagrangian
         avg_violation = rewards[:, 1].mean().item()
-        tensordict_data['avg_violation'] = torch.full(tensordict_data.batch_size, avg_violation)
+        tensordict_data['avg_violation'] = torch.full(tensordict_data.batch_size,  # need to rescale
+                                                      avg_violation)
         for epoch in range(cfg.training.num_epochs):
             data_view = tensordict_data.reshape(-1)
             replay_buffer.extend(data_view.cpu())

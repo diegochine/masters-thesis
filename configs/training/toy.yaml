@@ -1,0 +1,8 @@
+device: "cpu"
+num_envs: 16
+lr: 0.002
+max_grad_norm: 0.5
+frames_per_batch: 3200  # Number of frames collected for each rollout
+iterations: 10    # Total number of training iterations
+num_epochs: 5     # Number of epochs per batch of data
+batch_size: 320   # Sub-batch size used within each epoch

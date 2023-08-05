@@ -1,2 +1,5 @@
 max_steps: 100
 variant: toy
+reward_loc: 0
+reward_scale: 1
+iter_init_stats: 10000

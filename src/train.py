@@ -104,13 +104,9 @@ def main(cfg: DictConfig) -> None:
         wandb.define_metric("eval/avg_violation", summary="min", step_metric='train/iteration')
         wandb.define_metric("eval/avg_sv", summary="max", step_metric='train/iteration')
 
-    ########################################################################################################################
-    # TRAINING LOOP
-    ########################################################################################################################
-
     pbar = tqdm(total=total_frames, desc="Training", unit=" frames")
-
     train_loop(cfg, collector, device, eval_env, loss_module, optim, pbar, policy_module, replay_buffer, scheduler)
+
     collector.shutdown()
     pbar.close()
 
