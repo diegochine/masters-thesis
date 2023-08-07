@@ -90,8 +90,11 @@ def main(cfg: DictConfig) -> None:
 
     # Initialize wandb
     if cfg.wandb.use_wandb:
-        tags = [cfg.agent.algo, cfg.environment.controller] + (['safety_layer'] if cfg.environment.safety_layer else [])
-        tags += list(map(lambda i: str(i), OmegaConf.to_object(cfg.environment.instances)))
+        tags = [cfg.agent.algo]
+        if cfg.environment.variant != 'toy':
+            tags += ['safety_layer'] if cfg.environment.safety_layer else []
+            tags += [cfg.environment.controller]
+            tags += list(map(lambda i: str(i), OmegaConf.to_object(cfg.environment.instances)))
         wandb_cfg = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
         wandb.init(**cfg.wandb.setup, group=cfg.environment.variant, tags=tags, config=wandb_cfg,
                    settings=wandb.Settings(start_method="thread"))

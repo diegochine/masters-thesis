@@ -1,5 +1,5 @@
 import torch
-from tensordict import TensorDictBase
+from tensordict import TensorDictBase, TensorDict
 from tensordict.nn import inv_softplus
 from torch import nn
 
@@ -21,7 +21,7 @@ class NaiveLagrange(nn.Module):
         self.register_buffer('cost_limit', torch.tensor(cost_limit))
         self.proj = torch.nn.functional.softplus
 
-    def forward(self, tdict: TensorDictBase):
+    def forward(self, tdict: TensorDictBase) -> float:
         """Computes lagrangian loss.
         :param tdict: TensorDict with key 'avg_violation' containing the constraint violation of the last rollout.
         """
@@ -31,4 +31,8 @@ class NaiveLagrange(nn.Module):
 
     def get(self):
         """Returns the current value of the lagrangian multiplier."""
-        return torch.nn.functional.softplus(self.lag).detach()
+        return self.proj(self.lag).detach()
+
+    def get_logs(self) -> TensorDictBase:
+        """Returns a tdict with log information."""
+        return TensorDict({'lagrangian': [self.get()]}, batch_size=1)

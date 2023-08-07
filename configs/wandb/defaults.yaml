@@ -5,4 +5,4 @@ setup:
 watch:
     log: all
     log_freq: 100
-use_wandb: False  # Flag to use wandb
+use_wandb: True  # Flag to use wandb

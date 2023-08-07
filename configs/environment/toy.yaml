@@ -1,4 +1,4 @@
-max_steps: 100
+max_steps: 30
 variant: toy
 reward_loc: 0
 reward_scale: 1

@@ -1,5 +1,5 @@
 import torch
-from tensordict import TensorDictBase
+from tensordict import TensorDictBase, TensorDict
 from torch import nn
 
 
@@ -14,6 +14,7 @@ class PIDLagrange(nn.Module):
                  d_delay: int = 5,
                  alpha_p: float = 0.95,
                  alpha_d: float = 0.95,
+                 w_i: float = 0.1,
                  initial_value: float = 1.0,
                  cost_limit: float = 0.0,
                  proj: str = 'relu',
@@ -36,9 +37,10 @@ class PIDLagrange(nn.Module):
         self.register_buffer('d_delay', torch.tensor(d_delay))
         self.register_buffer('alpha_p', torch.tensor(alpha_p))
         self.register_buffer('alpha_d', torch.tensor(alpha_d))
+        self.register_buffer('w_i', torch.tensor(w_i))
         self.register_buffer('pid_i', torch.tensor(initial_value))
         self.register_buffer('cost_limit', torch.tensor(cost_limit))
-        self.register_buffer('prev_costs', torch.zeros((d_delay, )))
+        self.register_buffer('prev_costs', torch.zeros((d_delay,)))
         self.register_buffer('delta_p', torch.tensor(0.0))
         self.register_buffer('cost_d', torch.tensor(0.0))
         self.register_buffer('lag', torch.tensor(0.0))
@@ -50,12 +52,12 @@ class PIDLagrange(nn.Module):
         """Updates the PID controller. """
         avg_violation = tdict.get('avg_violation').mean()
         delta = avg_violation - self.cost_limit
-        self.pid_i = self.proj(self.pid_i + delta * self.ki)
+        self.pid_i = self.pid_i + self.w_i * self.proj(delta - self.pid_i)
 
         self.delta_p = self.alpha_p * self.delta_p + (1 - self.alpha_p) * delta
         self.cost_d = self.alpha_d * self.cost_d + (1 - self.alpha_d) * avg_violation
         pid_d = self.proj(self.cost_d - self.prev_costs[0])
-        pid_o = self.proj(self.kp * self.delta_p + self.pid_i + self.kd * pid_d)
+        pid_o = self.proj(self.kp * self.delta_p + self.ki * self.pid_i + self.kd * pid_d)
 
         loss_lagrangian = self.lag - pid_o
         self.lag = pid_o
@@ -67,3 +69,12 @@ class PIDLagrange(nn.Module):
     def get(self):
         """Returns the current value of the lagrangian multiplier."""
         return self.lag
+
+    def get_logs(self) -> TensorDictBase:
+        """Returns a tdict with log information."""
+        return TensorDict({'lagrangian': [self.get()],
+                           'pid_i': [self.pid_i],
+                           'pid_p': [self.delta_p],
+                           'pid_d': [self.proj(self.cost_d - self.prev_costs[0])],
+                           'cost_d': [self.cost_d]
+                           }, batch_size=1)

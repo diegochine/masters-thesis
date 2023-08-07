@@ -1,3 +1,4 @@
+import tensordict
 import torch
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule, ProbabilisticTensorDictSequential
@@ -67,7 +68,7 @@ class PPOLagLoss(ClipPPOLoss):
             loss_lagrangian = self.lag(tmp_td)
             td_out.set("loss_lagrangian", loss_lagrangian)
         self.step = (self.step + 1) % self.lagrangian_delay
-        td_out.set("lagrangian", self.lag.get())
+        td_out = tensordict.merge_tensordicts(td_out, self.lag.get_logs())
 
         # compute advantages for both critics
         tmp_td = tmp_td.set(('next', 'reward'), tdict.get(('next', 'reward'))[:, :1])
