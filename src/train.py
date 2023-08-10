@@ -1,5 +1,4 @@
 import argparse
-from collections import defaultdict
 
 import hydra
 import omegaconf
@@ -9,6 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 from torchrl.collectors import MultiSyncDataCollector
 from torchrl.data import TensorDictReplayBuffer, LazyMemmapStorage
 from torchrl.data.replay_buffers import SamplerWithoutReplacement
+from torchrl.envs import SerialEnv
 from tqdm import tqdm
 
 from src.utils import VARIANTS, RL_ALGOS, CONTROLLERS
@@ -77,8 +77,11 @@ def main(cfg: DictConfig) -> None:
         prefetch=cfg.training.num_epochs,
         sampler=SamplerWithoutReplacement()  # for PPO only, ensures the entire dataset is used
     )
-
-    eval_env = make_env(device=device, t_state_dict=t_state_dict, **cfg.environment)
+    eval_env = SerialEnv(num_workers=len(cfg.environment.instances),
+                         create_env_fn=make_env,
+                         create_env_kwargs=[
+                             {'device': device, 't_state_dict': t_state_dict, 'wandb_log': False, **cfg.environment,
+                              'instances': [instance]} for instance in cfg.environment.instances])
     eval_env.reset()
 
     optim = torch.optim.Adam([

@@ -71,7 +71,7 @@ class VPPEnv(Env):
         self.p_diesel_max = 1200
 
         # We randomly choose an instance
-        self.mr = random.randint(self.predictions.index.min(), self.predictions.index.max())
+        self.mr = np.random.choice(self.predictions.index)
 
         self.savepath = savepath
         self.use_safety_layer = use_safety_layer
@@ -82,7 +82,8 @@ class VPPEnv(Env):
         self._wandb_log = wandb_log
 
         # needed by torchrl
-        self.reward_space = Box(low=np.array([-np.inf, -np.inf]), high=np.array([np.inf, np.inf]), shape=(2,), dtype=np.float32)
+        self.reward_space = Box(low=np.array([-np.inf, -np.inf]), high=np.array([np.inf, np.inf]),
+                                shape=(2,), dtype=np.float32)
 
     @staticmethod
     def instances_preprocessing(instances: pd.DataFrame) -> pd.DataFrame:
@@ -218,7 +219,7 @@ class VPPEnv(Env):
         self._clear()
 
         # We randomly choose an instance
-        self.mr = random.randint(self.predictions.index.min(), self.predictions.index.max())
+        self.mr = np.random.choice(self.predictions.index)
         self._create_instance_variables()
         return self._get_observations()
 

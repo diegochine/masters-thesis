@@ -1,6 +1,7 @@
 import os
 from typing import Tuple
 
+import hydra
 import numpy as np
 import pandas as pd
 
@@ -8,12 +9,13 @@ import torch
 import tqdm
 import wandb
 from omegaconf import ListConfig, DictConfig
+from tensordict import TensorDictBase
 from tensordict.nn import NormalParamExtractor, TensorDictModule
-from torch import nn
+from torch import nn, Tensor
 from torchrl.collectors import DataCollectorBase
-from torchrl.data import TensorDictReplayBuffer
+from torchrl.data import TensorDictReplayBuffer, UnboundedDiscreteTensorSpec
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
-    RewardScaling
+    RewardScaling, default_info_dict_reader, EnvBase
 from torchrl.envs.libs.gym import GymWrapper
 from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal
 from torchrl.objectives import LossModule
@@ -123,7 +125,9 @@ def make_env(device: torch.device,
         raise ValueError(f'Variant name must be in {VARIANTS}')
 
     # Make torchrl env with transforms
-    torchrl_env = GymWrapper(base_env, device=device)
+    info_reader = default_info_dict_reader(["instance"],
+                                           spec=[UnboundedDiscreteTensorSpec(shape=torch.Size([1]), dtype=torch.int64)])
+    torchrl_env = GymWrapper(base_env, device=device).set_info_dict_reader(info_reader)
     transforms = [
         ObservationNorm(in_keys=["observation"]),  # normalize observations
         StepCounter(max_steps=max_steps),  # maximum steps per episode
@@ -146,13 +150,13 @@ def make_env(device: torch.device,
 
 ########################################################################################################################
 
-def get_agent_modules(env: TransformedEnv,
+def get_agent_modules(env: EnvBase,
                       cfg: DictConfig,
                       device: torch.device) -> (LossModule, ProbabilisticActor, Tuple[nn.Module]):
     """Creates and initializes agent modules.
-    :param env:
-    :param cfg:
-    :param device:
+    :param env: environment used for initialization.
+    :param cfg: Hydra config.
+    :param device: torch device to use.
     """
 
     def init_module(module, name):
@@ -238,10 +242,58 @@ def get_agent_modules(env: TransformedEnv,
     return loss_module, policy_module, (actor_net, critic_net, safe_critic_net)
 
 
+def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict):
+    """Evaluate the policy on the evaluation environment.
+    :param eval_env: environment to evaluate on.
+    :param policy_module: policy to evaluate.
+    :param optimal_scores: optimal costs for each instance in the evaluation environment.
+    """
+    with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
+        # execute a rollout with the trained policy
+        eval_rollout = eval_env.rollout(100, policy_module)
+        rewards = get_rollout_scores(eval_rollout, reduce=False)
+        # normalize scores according to optimal score of each instance
+        optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
+                                                 for instance in rewards[:, 2]])
+        rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
+        rewards[:, 1] = rewards[:, 1] / 500  # FIXME should not be hardcoded, works with cap_max = 1000 and c = 0.5
+        eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
+                    'eval/avg_violation': rewards[:, 1].mean().item(),
+                    'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
+                    'eval/all_violations': wandb.Histogram(np_histogram=np.histogram(rewards[:, 1]))
+                    }
+        eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 4.0f}, " \
+                   f"avg violation = {eval_log['eval/avg_violation']: 4.0f}"
+        histories = list(eval_env.history)
+        actions_log = {f'actions/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
+        eval_env.reset()  # reset the environment after the eval rollout
+        del eval_rollout
+    return {**eval_log, **actions_log}, eval_str
+
+
+def get_rollout_scores(eval_rollout: TensorDictBase, reduce: bool = True) -> Tensor | Tuple[float, float]:
+    """Get the scores from a rollout.
+    :param eval_rollout: rollout to get the scores from.
+    :param reduce: whether to reduce the scores to a single value (mean) or not.
+    :return: (mean score, mean violation) if reduce;
+        else, tensor of shape (n_dones, 3) with scores, violations and instance number.
+    """
+    dones = (eval_rollout[('next', 'done')] | eval_rollout[('next', 'truncated')]).reshape(-1)
+    cumrewards = eval_rollout['next', 'episode_reward'].reshape(-1, 2)
+    instances = eval_rollout['instance'].reshape(-1, 1)
+    rewards = torch.cat([cumrewards, instances], dim=1)[dones.squeeze()]
+    if reduce:
+        avg_score = rewards[:, 0].mean().item()
+        avg_violation = rewards[:, 1].mean().item()
+        return avg_score, avg_violation
+    else:
+        return rewards
+
+
 def train_loop(cfg: DictConfig,
                collector: DataCollectorBase,
                device: torch.device,
-               eval_env: TransformedEnv,
+               eval_env: EnvBase,
                loss_module: LossModule,
                optim: torch.optim.Optimizer,
                pbar: tqdm.tqdm,
@@ -260,18 +312,17 @@ def train_loop(cfg: DictConfig,
     :param replay_buffer: replay buffer
     :param scheduler: learning rate scheduler
     """
+    optimal_costs = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
+                     for instance in cfg.environment.instances}
+
     # Iterate over the collector until it reaches frames_per_batch frames
-    for i, tensordict_data in enumerate(collector):
+    for i, rollout_td in enumerate(collector):
         # get dones to compute average cumulative reward and constraint violation
-        dones = (tensordict_data[('next', 'done')] | tensordict_data[('next', 'truncated')])
-        rewards = tensordict_data['next', 'episode_reward'][dones.squeeze()]
-        avg_score = rewards[:, 0].mean().item()
-        # We need the average violation to update the lagrangian
-        avg_violation = rewards[:, 1].mean().item()
-        tensordict_data['avg_violation'] = torch.full(tensordict_data.batch_size,  # need to rescale
+        avg_score, avg_violation = get_rollout_scores(rollout_td)
+        rollout_td['avg_violation'] = torch.full(rollout_td.batch_size,  # need to rescale
                                                       avg_violation)
         for epoch in range(cfg.training.num_epochs):
-            data_view = tensordict_data.reshape(-1)
+            data_view = rollout_td.reshape(-1)
             replay_buffer.extend(data_view.cpu())
             for b in range(cfg.training.frames_per_batch // cfg.training.batch_size):
                 subdata = replay_buffer.sample(cfg.training.batch_size)
@@ -292,30 +343,16 @@ def train_loop(cfg: DictConfig,
         train_log = {'train/iteration': i,
                      'train/avg_score': avg_score,
                      'train/avg_violation': avg_violation,
-                     'train/max_steps': tensordict_data["step_count"].max().item(),
+                     'train/max_steps': rollout_td["step_count"].max().item(),
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"],
                      'debug/lag_lr': optim.param_groups[2]["lr"]}
 
-        pbar.update(tensordict_data.numel())
+        pbar.update(rollout_td.numel())
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 4.0f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 4.0f}, " \
                     f"max steps = {train_log['train/max_steps']: 2d}"
-        with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
-            # execute a rollout with the trained policy
-            eval_rollout = eval_env.rollout(1000, policy_module)
-            dones = (eval_rollout[('next', 'done')] | eval_rollout[('next', 'truncated')])
-            rewards = eval_rollout['next', 'episode_reward'][dones.squeeze()]
-            avg_score = rewards[:, 0].mean().item()
-            avg_violation = rewards[:, 1].mean().item()
-            eval_log = {'eval/avg_score': avg_score,
-                        'eval/avg_violation': avg_violation,
-                        'eval/avg_sv': avg_score - avg_violation,  # objective of wandb sweeps (maximize)
-                        }
-            eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 4.0f}, " \
-                       f"avg violation = {eval_log['eval/avg_violation']: 4.0f}"
-            eval_env.reset()  # reset the environment after the eval rollout
-            del eval_rollout
+        eval_log, eval_str = evaluate(eval_env, policy_module, optimal_costs)
 
         pbar.set_description(f"{train_str} | {eval_str} ")
         if cfg.wandb.use_wandb:

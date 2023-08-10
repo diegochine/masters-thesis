@@ -71,7 +71,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         if self.storage is not None:  # only add storage for standard variant, not toy
             observations = np.append(observations, self.storage)
 
-        return observations, dict(constraint_violation=0.)
+        return observations, dict(instance=self.mr.reshape(1))
 
     def _clear(self):
         """
@@ -344,4 +344,5 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
 
         return observations, reward, terminated, truncated, {'feasible': feasible,
                                                              'action': actual_action,
-                                                             'sl_usage': self.sl_counter / self.timestep}
+                                                             'sl_usage': self.sl_counter / self.timestep,
+                                                             'instance': self.mr.reshape(1)}
