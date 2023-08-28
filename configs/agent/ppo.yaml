@@ -2,19 +2,19 @@ algo: "ppolag"
 lagrange:
   type: pid
   params:
-    initial_value: 1.0
+    initial_value: 3.0
     kp: 0.01
-    ki: 0.0005
-    kd: 0.1
+    ki: 0.0002
+    kd: 0.005
     d_delay: 5
-    alpha_p: 0.1
-    alpha_d: 0.1
+    alpha_p: 0.5
+    alpha_d: 0.5
     w_i: 0.1
     cost_limit: 0
-    proj: "relu"
+    proj: "softplus"
 
 actor_lr: 0.01
-critic_lr: 0.005
+critic_lr: 0.01
 lag_lr: 0.05
 
 loss_module:
