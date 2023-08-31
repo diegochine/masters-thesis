@@ -185,7 +185,7 @@ class VPPEnv(Env):
         # Reset the actions' history
         self.history = dict(energy_bought=[], energy_sold=[], diesel_power=[],
                             input_storage=[], output_storage=[], storage_capacity=[],
-                            c_virt=[])
+                            c_virt_in=[], c_virt_out=[])
 
     def step(self, action: np.array):
         """

@@ -53,7 +53,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
         if self.controller == 'rl':
             self.action_space = Box(low=-1, high=1, shape=(4,), dtype=np.float32)
         else:
-            self.action_space = Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
+            self.action_space = Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32)
         # Coefficient of the cumulative constraint,
         # i.e. on average storage capacity should be >= cumulative_storage_bound
         assert 0 <= cumulative_storage_bound <= 1, f'cumulative_storage_bound must be in [0, 1], received: {cumulative_storage_bound}'

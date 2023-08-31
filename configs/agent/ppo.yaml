@@ -2,7 +2,7 @@ algo: "ppolag"
 lagrange:
   type: pid
   params:
-    initial_value: 3.0
+    initial_value: 5.0
     kp: 0.01
     ki: 0.0002
     kd: 0.005
@@ -18,14 +18,14 @@ critic_lr: 0.01
 lag_lr: 0.05
 
 loss_module:
-  clip_epsilon: 0.2
-  entropy_coef: 0.0
-  entropy_bonus: False
+  clip_epsilon: 0.15
+  entropy_coef: 0.01
+  entropy_bonus: True
   critic_coef: 0.5
   gamma: 0.99
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
-  lagrangian_delay: 50
+  lagrangian_delay: 200
 
 estimator:
   gamma: 0.99

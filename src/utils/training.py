@@ -262,8 +262,8 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
                     'eval/all_violations': wandb.Histogram(np_histogram=np.histogram(rewards[:, 1]))
                     }
-        eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 4.0f}, " \
-                   f"avg violation = {eval_log['eval/avg_violation']: 4.0f}"
+        eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 1.2f}, " \
+                   f"avg violation = {eval_log['eval/avg_violation']: 1.2f}"
         histories = list(eval_env.history)
         actions_log = {f'actions/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
         eval_env.reset()  # reset the environment after the eval rollout
@@ -333,6 +333,7 @@ def train_loop(cfg: DictConfig,
                 torch.nn.utils.clip_grad_norm_(loss_module.parameters(), cfg.training.max_grad_norm)
                 optim.step()
                 optim.zero_grad()
+                scheduler.step()
                 # Log the losses and debug info
                 if cfg.wandb.use_wandb:
                     batch_log = {f"{'train' if k.startswith('loss_') else 'debug'}/{k}":
@@ -358,4 +359,3 @@ def train_loop(cfg: DictConfig,
         if cfg.wandb.use_wandb:
             wandb.log({**train_log, **eval_log})
 
-        scheduler.step()
