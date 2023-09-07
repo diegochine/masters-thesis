@@ -14,7 +14,6 @@ class PIDLagrange(nn.Module):
                  d_delay: int = 5,
                  alpha_p: float = 0.95,
                  alpha_d: float = 0.95,
-                 w_i: float = 0.1,
                  initial_value: float = 1.0,
                  cost_limit: float = 0.0,
                  proj: str = 'relu',
@@ -37,7 +36,6 @@ class PIDLagrange(nn.Module):
         self.register_buffer('d_delay', torch.tensor(d_delay))
         self.register_buffer('alpha_p', torch.tensor(alpha_p))
         self.register_buffer('alpha_d', torch.tensor(alpha_d))
-        self.register_buffer('w_i', torch.tensor(w_i))
         self.register_buffer('pid_i', torch.tensor(initial_value))
         self.register_buffer('cost_limit', torch.tensor(cost_limit))
         self.register_buffer('prev_costs', torch.zeros((d_delay,)))
@@ -52,7 +50,7 @@ class PIDLagrange(nn.Module):
         """Updates the PID controller. """
         avg_violation = tdict.get('avg_violation').mean()
         delta = avg_violation - self.cost_limit
-        self.pid_i = self.pid_i + self.w_i * self.proj(delta - self.pid_i)
+        self.pid_i = self.proj(self.pid_i + delta)
 
         self.delta_p = self.alpha_p * self.delta_p + (1 - self.alpha_p) * delta
         self.cost_d = self.alpha_d * self.cost_d + (1 - self.alpha_d) * avg_violation
