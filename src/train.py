@@ -89,7 +89,13 @@ def main(cfg: DictConfig) -> None:
         {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
         {'params': [p for k, p in loss_module.named_parameters() if 'lag' in k], 'lr': cfg.agent.lag_lr}
     ], lr=cfg.training.lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, 20, 2, 1e-4)
+    if cfg.agent.schedule:
+        scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optim,
+                                                              lr_lambda=[lambda _: cfg.agent.schedule_factor,
+                                                                         lambda _: cfg.agent.schedule_factor,
+                                                                         lambda _: 1.])
+    else:
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda _: 1.)
 
     # Initialize wandb
     if cfg.wandb.use_wandb:
