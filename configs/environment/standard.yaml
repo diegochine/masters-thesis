@@ -10,5 +10,5 @@ instances:
   - 2732
 
 reward_loc: 0
-reward_scale: 0.05
+reward_scale: 0
 iter_init_stats: 10000

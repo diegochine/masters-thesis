@@ -54,7 +54,7 @@ def make_env(device: torch.device,
              instances: float | list | None = None,
              noise_std_dev: float | int = 0.01,
              safety_layer: bool = False,
-             wandb_log: bool = True,
+             wandb_run: wandb.sdk.wandb_run.Run | None = None,
              max_steps: int | None = None,
              iter_init_stats: int = 1000,
              reward_loc: float = 0.,
@@ -72,7 +72,7 @@ def make_env(device: torch.device,
                 if None, randomly choose an instance
         :param noise_std_dev: standard deviation of noise
         :param safety_layer: whether to use safety layer
-        :param wandb_log: whether to log to wandb
+        :param wandb_run: optional, wandb.Run object used to log
         :param max_steps: maximum number of steps per episode
         :param iter_init_stats: number of iterations to initialize stats
         :param reward_loc: reward location (mean)
@@ -111,7 +111,7 @@ def make_env(device: torch.device,
                                       savepath=None,
                                       use_safety_layer=safety_layer,
                                       bound_storage_in=False,
-                                      wandb_log=wandb_log)
+                                      wandb_run=wandb_run)
         else:
             base_env = CumulativeVPPEnv(predictions=train_predictions,
                                         shift=shift,
@@ -120,7 +120,7 @@ def make_env(device: torch.device,
                                         noise_std_dev=noise_std_dev,
                                         savepath=None,
                                         use_safety_layer=safety_layer,
-                                        wandb_log=wandb_log)
+                                        wandb_run=wandb_run)
     else:
         raise ValueError(f'Variant name must be in {VARIANTS}')
 
@@ -256,7 +256,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        rewards[:, 1] = rewards[:, 1] / 500  # FIXME should not be hardcoded, works with cap_max = 1000 and c = 0.5
+        rewards[:, 1] = rewards[:, 1] / 500  # FIXME should not be hardcoded, works with cap_max = 1000, c = 0.5, w = 0.1
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
@@ -265,7 +265,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 1.2f}, " \
                    f"avg violation = {eval_log['eval/avg_violation']: 1.2f}"
         histories = list(eval_env.history)
-        actions_log = {f'actions/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
+        actions_log = {f'eval/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
         eval_env.reset()  # reset the environment after the eval rollout
         del eval_rollout
     return {**eval_log, **actions_log}, eval_str
@@ -314,17 +314,17 @@ def train_loop(cfg: DictConfig,
     """
     optimal_costs = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
                      for instance in cfg.environment.instances}
-
+    num_batches = cfg.training.frames_per_batch // cfg.training.batch_size
+    train_step = 0
     # Iterate over the collector until it reaches frames_per_batch frames
-    for i, rollout_td in enumerate(collector):
+    for it, rollout_td in enumerate(collector):
         # get dones to compute average cumulative reward and constraint violation
         avg_score, avg_violation = get_rollout_scores(rollout_td)
-        rollout_td['avg_violation'] = torch.full(rollout_td.batch_size,  # need to rescale
-                                                      avg_violation)
+        rollout_td['avg_violation'] = torch.full(rollout_td.batch_size, avg_violation)
         for epoch in range(cfg.training.num_epochs):
             data_view = rollout_td.reshape(-1)
             replay_buffer.extend(data_view.cpu())
-            for b in range(cfg.training.frames_per_batch // cfg.training.batch_size):
+            for b in range(num_batches):
                 subdata = replay_buffer.sample(cfg.training.batch_size)
                 loss_info = loss_module(subdata.to(device))
                 loss_value = sum(loss_info[k] for k in loss_info.keys() if k.startswith('loss_'))
@@ -333,15 +333,16 @@ def train_loop(cfg: DictConfig,
                 torch.nn.utils.clip_grad_norm_(loss_module.parameters(), cfg.training.max_grad_norm)
                 optim.step()
                 optim.zero_grad()
-                scheduler.step()
                 # Log the losses and debug info
                 if cfg.wandb.use_wandb:
                     batch_log = {f"{'train' if k.startswith('loss_') else 'debug'}/{k}":
                                      (v.item() if v.numel() == 1 else v.numpy())  # to log both scalars and arrays
                                  for k, v in loss_info.items()}
-                    wandb.log(batch_log)
+                    wandb.log({'train_step': train_step, ** batch_log})
+                    train_step += 1
 
-        train_log = {'train/iteration': i,
+            scheduler.step()
+        train_log = {'train/iteration': it,
                      'train/avg_score': avg_score,
                      'train/avg_violation': avg_violation,
                      'train/max_steps': rollout_td["step_count"].max().item(),
@@ -358,4 +359,3 @@ def train_loop(cfg: DictConfig,
         pbar.set_description(f"{train_str} | {eval_str} ")
         if cfg.wandb.use_wandb:
             wandb.log({**train_log, **eval_log})
-

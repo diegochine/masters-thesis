@@ -33,6 +33,7 @@ class PPOLagLoss(ClipPPOLoss):
             c_value_target_key: str = "c_value_target",
             r_value_key: str = "r_value",
             c_value_key: str = "c_value",
+            cost_scale: float = 1.0,
             **kwargs,
     ):
         super(PPOLagLoss, self).__init__(actor, critic,
@@ -49,6 +50,7 @@ class PPOLagLoss(ClipPPOLoss):
         self.c_value_estimator = c_value_estimator
         self.register_buffer('lagrangian_delay', torch.tensor(lagrangian_delay))
         self.register_buffer('step', torch.tensor(0))
+        self.register_buffer('cost_scale', torch.tensor(cost_scale))
 
     @property
     def out_keys(self):
@@ -64,6 +66,7 @@ class PPOLagLoss(ClipPPOLoss):
         td_out = TensorDict({}, [])
 
         if self.step % self.lagrangian_delay == 0:
+            tmp_td = tmp_td.set('avg_violation', tdict.get('avg_violation') * self.cost_scale)
             # compute lagrangian loss
             loss_lagrangian = self.lag(tmp_td)
             td_out.set("loss_lagrangian", loss_lagrangian)
@@ -77,7 +80,8 @@ class PPOLagLoss(ClipPPOLoss):
             params=self.critic_params.detach(),
             target_params=self.target_critic_params,
         )
-        tmp_td = tmp_td.set(('next', 'reward'), tdict.get(('next', 'reward'))[:, 1:])
+        # safety cost is scaled by cost_scale
+        tmp_td = tmp_td.set(('next', 'reward'), tdict.get(('next', 'reward'))[:, 1:] * self.cost_scale)
         self.c_value_estimator(
             tmp_td,
             params=self.safe_critic_params.detach(),

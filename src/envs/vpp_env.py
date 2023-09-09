@@ -1,8 +1,6 @@
-import random
 from datetime import datetime, timedelta
 from typing import List, Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from gymnasium import Env
@@ -11,6 +9,7 @@ from gurobipy import GRB
 from gymnasium.spaces import Box
 from tabulate import tabulate
 import wandb
+
 
 ########################################################################################################################
 
@@ -25,6 +24,10 @@ class VPPEnv(Env):
     # Number of timesteps in one day
     N = 96
 
+    ACTIONS = ['energy_bought', 'energy_sold', 'diesel_power',
+               'input_storage', 'output_storage', 'storage_capacity',
+               'c_virt_in', 'c_virt_out']
+
     # This is a gym.Env variable that is required by garage for rendering
     metadata = {
         "render.modes": ["ascii"]
@@ -38,7 +41,7 @@ class VPPEnv(Env):
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
                  use_safety_layer: bool = False,
-                 wandb_log: bool = True):
+                 wandb_run: wandb.sdk.wandb_run.Run | None = None):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -78,8 +81,9 @@ class VPPEnv(Env):
         self._min_rewards = [self.MIN_REWARD * 0.99 ** i for i in range(self.N)]
         self._create_instance_variables()
 
-        # bool to toogle logging
-        self._wandb_log = wandb_log
+        # wandb Run object for logging and episode step tracker
+        self._wandb_run = wandb_run
+        self._episode_step = 0
 
         # needed by torchrl
         self.reward_space = Box(low=np.array([-np.inf, -np.inf]), high=np.array([np.inf, np.inf]),
@@ -183,9 +187,7 @@ class VPPEnv(Env):
         self.sl_counter = 0
 
         # Reset the actions' history
-        self.history = dict(energy_bought=[], energy_sold=[], diesel_power=[],
-                            input_storage=[], output_storage=[], storage_capacity=[],
-                            c_virt_in=[], c_virt_out=[])
+        self.history = {a: [] for a in self.ACTIONS}
 
     def step(self, action: np.array):
         """
@@ -251,13 +253,7 @@ class VPPEnv(Env):
         Logs training info using wandb.
         :return:
         """
-        if self._wandb_log and wandb.run is not None:
-            fig, axes = plt.subplots(3, 2, figsize=(20, 15))
-            axes = axes.reshape(-1)
-            means = dict()
-            for ax, (k, hist) in enumerate(self.history.items()):
-                means[f'actions/avg_{k}'] = np.mean(hist)
-                if k != 'c_virt':
-                    axes[ax].plot(hist)
-                    axes[ax].set_title(f'{k} (avg: {means[f"actions/avg_{k}"]:>3.0f})', y=0.9)
-            wandb.log({'actions/chart': fig, **means, **kwargs})
+        if self._wandb_run is not None:
+            actions_log = {f'train/{k}': np.array(v).reshape(-1, 1) for k, v in self.history.items()}
+            self._wandb_run.log({'train_episode': self._episode_step, **actions_log})
+            self._episode_step += 1

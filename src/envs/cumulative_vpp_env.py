@@ -2,6 +2,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+import wandb
 from gymnasium.spaces import Box
 
 from src.envs.standard_vpp_env import StandardVPPEnv
@@ -24,7 +25,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
                  use_safety_layer: bool = False,
-                 wandb_log: bool = True,
+                 wandb_run: wandb.sdk.wandb_run.Run | None = None,
                  cumulative_storage_bound: float = 0.5):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
@@ -46,7 +47,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
                          savepath=savepath,
                          use_safety_layer=use_safety_layer,
                          bound_storage_in=True,
-                         wandb_log=wandb_log)
+                         wandb_run=wandb_run)
 
         # Here we define the observation and action spaces
         self.observation_space = Box(low=-np.inf, high=np.inf, shape=(self.N * 3 + 1,), dtype=np.float32)

@@ -2,6 +2,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+import wandb
 from gurobipy import Model, GRB
 from gymnasium.spaces import Box
 
@@ -26,7 +27,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                  savepath: str = None,
                  use_safety_layer: bool = False,
                  bound_storage_in: bool = True,
-                 wandb_log: bool = True):
+                 wandb_run: wandb.sdk.wandb_run.Run | None = None):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -46,7 +47,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                          noise_std_dev=noise_std_dev,
                          savepath=savepath,
                          use_safety_layer=use_safety_layer,
-                         wandb_log=wandb_log)
+                         wandb_run=wandb_run)
         self._bound_storage_in = bound_storage_in
 
         # Here we define the observation and action spaces
@@ -87,9 +88,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         self.timestep = 0
         self.cumulative_cost = 0
 
-        self.history = dict(energy_bought=[], energy_sold=[], diesel_power=[],
-                            input_storage=[], output_storage=[], storage_capacity=[],
-                            c_virt_in=[], c_virt_out=[])
+        self.history = {a: [] for a in self.ACTIONS}
 
     def _solve_rl(self, action: np.array) -> Tuple[bool, int | float, np.array, float]:
         """
