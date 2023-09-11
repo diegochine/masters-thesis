@@ -316,14 +316,15 @@ def train_loop(cfg: DictConfig,
     :param replay_buffer: replay buffer
     :param scheduler: learning rate scheduler
     """
-    optimal_costs = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
+    optimal_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
                      for instance in cfg.environment.instances}
     num_batches = cfg.training.frames_per_batch // cfg.training.batch_size
     train_step = 0
     # Iterate over the collector until it reaches frames_per_batch frames
     for it, rollout_td in enumerate(collector):
         # get dones to compute average cumulative reward and constraint violation
-        avg_score, avg_violation = get_rollout_scores(rollout_td)
+        rewards = get_rollout_scores(rollout_td, reduce=False)
+        avg_violation = rewards[:, 1].mean().item()
         rollout_td['avg_violation'] = torch.full(rollout_td.batch_size, avg_violation)
         for epoch in range(cfg.training.num_epochs):
             data_view = rollout_td.reshape(-1)
@@ -346,9 +347,11 @@ def train_loop(cfg: DictConfig,
                     train_step += 1
 
             scheduler.step()
+        optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
+                                                 for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
-                     'train/avg_score': avg_score,
-                     'train/avg_violation': avg_violation,
+                     'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
+                     'train/avg_violation': avg_violation / 500,
                      'train/max_steps': rollout_td["step_count"].max().item(),
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"],
@@ -358,7 +361,7 @@ def train_loop(cfg: DictConfig,
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 4.0f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 4.0f}, " \
                     f"max steps = {train_log['train/max_steps']: 2d}"
-        eval_log, eval_str = evaluate(eval_env, policy_module, optimal_costs)
+        eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores)
 
         pbar.set_description(f"{train_str} | {eval_str} ")
         if cfg.wandb.use_wandb:
