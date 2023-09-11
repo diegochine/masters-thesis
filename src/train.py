@@ -134,7 +134,7 @@ def main(cfg: DictConfig) -> None:
         {'params': [p for k, p in loss_module.named_parameters() if 'actor' in k], 'lr': cfg.agent.actor_lr},
         {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
         {'params': [p for k, p in loss_module.named_parameters() if 'lag' in k], 'lr': cfg.agent.lag_lr}
-    ], lr=cfg.training.lr)
+    ])
     if cfg.agent.schedule:
         scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optim,
                                                               lr_lambda=[lambda _: cfg.agent.schedule_factor,

@@ -17,7 +17,7 @@ from torchrl.data import TensorDictReplayBuffer, UnboundedDiscreteTensorSpec
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
     RewardScaling, default_info_dict_reader, EnvBase
 from torchrl.envs.libs.gym import GymWrapper
-from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal
+from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TanhNormal
 from torchrl.objectives import LossModule
 from torchrl.objectives.value import GAE
 from torchrl.envs.utils import ExplorationType, set_exploration_type
@@ -174,13 +174,17 @@ def get_agent_modules(env: EnvBase,
         )
         # initialize last layer of actor_net to produce actions close to zero at the beginning
         torch.nn.init.uniform_(actor_net[0][-1].weight, -1e-3, 1e-3)
+        distribution_class = IndependentNormal if cfg.agent.actor_dist_bound is None else TanhNormal
+        distribution_kwargs = None if cfg.agent.actor_dist_bound is None else {'min': -cfg.agent.actor_dist_bound,
+                                                                               'max': cfg.agent.actor_dist_bound}
         policy_module = ProbabilisticActor(
             module=TensorDictModule(
                 module=actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
             ),
             spec=env.action_spec,
             in_keys=["loc", "scale"],
-            distribution_class=IndependentNormal,
+            distribution_class=distribution_class,
+            distribution_kwargs=distribution_kwargs,
             return_log_prob=True,  # we'll need the log-prob for the numerator of the importance weights
             default_interaction_type=ExplorationType.RANDOM,
         )
@@ -271,16 +275,16 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
     return {**eval_log, **actions_log}, eval_str
 
 
-def get_rollout_scores(eval_rollout: TensorDictBase, reduce: bool = True) -> Tensor | Tuple[float, float]:
+def get_rollout_scores(rollout_td: TensorDictBase, reduce: bool = True) -> Tensor | Tuple[float, float]:
     """Get the scores from a rollout.
-    :param eval_rollout: rollout to get the scores from.
+    :param rollout_td: rollout to get the scores from.
     :param reduce: whether to reduce the scores to a single value (mean) or not.
     :return: (mean score, mean violation) if reduce;
         else, tensor of shape (n_dones, 3) with scores, violations and instance number.
     """
-    dones = (eval_rollout[('next', 'done')] | eval_rollout[('next', 'truncated')]).reshape(-1)
-    cumrewards = eval_rollout['next', 'episode_reward'].reshape(-1, 2)
-    instances = eval_rollout['instance'].reshape(-1, 1)
+    dones = (rollout_td[('next', 'done')] | rollout_td[('next', 'truncated')]).reshape(-1)
+    cumrewards = rollout_td['next', 'episode_reward'].reshape(-1, 2)
+    instances = rollout_td['instance'].reshape(-1, 1)
     rewards = torch.cat([cumrewards, instances], dim=1)[dones.squeeze()]
     if reduce:
         avg_score = rewards[:, 0].mean().item()

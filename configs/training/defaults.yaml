@@ -1,6 +1,5 @@
 device: "cpu"
-num_envs: 32
-lr: 0.002
+num_envs: 8
 max_grad_norm: 0.5
 frames_per_batch: 3200  # Number of frames collected for each rollout
 iterations: 200    # Total number of training iterations

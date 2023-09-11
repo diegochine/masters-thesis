@@ -2,7 +2,7 @@ algo: "ppolag"
 lagrange:
   type: pid
   params:
-    initial_value: 5.0
+    initial_value: 50.0
     kp: 0.01
     ki: 0.001
     kd: 0.05
@@ -14,21 +14,24 @@ lagrange:
 
 actor_lr: 0.01
 critic_lr: 0.01
-lag_lr: 0.05
-schedule: True
+lag_lr: 0.1
+schedule: False
 schedule_factor: 0.9998
+
+actor_dist_bound: null  # either null or float; if null actions are unbounded,
+                        # if float action range is symmetric [-bound, bound]
 
 loss_module:
   clip_epsilon: 0.2
   entropy_coef: 0.01
   entropy_bonus: True
   critic_coef: 0.5
-  gamma: 0.99
+  gamma: 1
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
   lagrangian_delay: 10
   cost_scale: 1.0
 
 estimator:
-  gamma: 0.99
+  gamma: 1
   lmbda: 0.95
