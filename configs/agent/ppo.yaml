@@ -18,8 +18,8 @@ lag_lr: 0.1
 schedule: False
 schedule_factor: 0.9998
 
-actor_dist_bound: null  # either null or float; if null actions are unbounded,
-                        # if float action range is symmetric [-bound, bound]
+actor_dist_bound: 0 # float; if <= 0, actions are unbounded,
+                    # if > 0 action range is symmetric [-bound, bound]
 
 loss_module:
   clip_epsilon: 0.2

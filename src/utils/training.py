@@ -174,9 +174,9 @@ def get_agent_modules(env: EnvBase,
         )
         # initialize last layer of actor_net to produce actions close to zero at the beginning
         torch.nn.init.uniform_(actor_net[0][-1].weight, -1e-3, 1e-3)
-        distribution_class = IndependentNormal if cfg.agent.actor_dist_bound is None else TanhNormal
-        distribution_kwargs = None if cfg.agent.actor_dist_bound is None else {'min': -cfg.agent.actor_dist_bound,
-                                                                               'max': cfg.agent.actor_dist_bound}
+        distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TanhNormal
+        distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
+                                                                            'max': cfg.agent.actor_dist_bound}
         policy_module = ProbabilisticActor(
             module=TensorDictModule(
                 module=actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
@@ -260,7 +260,8 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        rewards[:, 1] = rewards[:, 1] / 500  # FIXME should not be hardcoded, works with cap_max = 1000, c = 0.5, w = 0.1
+        rewards[:, 1] = rewards[:,
+                        1] / 500  # FIXME should not be hardcoded, works with cap_max = 1000, c = 0.5, w = 0.1
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
@@ -317,7 +318,7 @@ def train_loop(cfg: DictConfig,
     :param scheduler: learning rate scheduler
     """
     optimal_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
-                     for instance in cfg.environment.instances}
+                      for instance in cfg.environment.instances}
     num_batches = cfg.training.frames_per_batch // cfg.training.batch_size
     train_step = 0
     # Iterate over the collector until it reaches frames_per_batch frames
@@ -343,7 +344,7 @@ def train_loop(cfg: DictConfig,
                     batch_log = {f"{'train' if k.startswith('loss_') else 'debug'}/{k}":
                                      (v.item() if v.numel() == 1 else v.numpy())  # to log both scalars and arrays
                                  for k, v in loss_info.items()}
-                    wandb.log({'train_step': train_step, ** batch_log})
+                    wandb.log({'train_step': train_step, **batch_log})
                     train_step += 1
 
             scheduler.step()
@@ -358,8 +359,8 @@ def train_loop(cfg: DictConfig,
                      'debug/lag_lr': optim.param_groups[2]["lr"]}
 
         pbar.update(rollout_td.numel())
-        train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 4.0f}, " \
-                    f"avg violation = {train_log['train/avg_violation']: 4.0f}, " \
+        train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 1.2f}, " \
+                    f"avg violation = {train_log['train/avg_violation']: 1.2f}, " \
                     f"max steps = {train_log['train/max_steps']: 2d}"
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores)
 
