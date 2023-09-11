@@ -1,6 +1,6 @@
 setup:
-    project: thesis
-    entity: diegochine
+    project: long-term-constraints
+    entity: unify
     mode: online
 watch:
     log: all
