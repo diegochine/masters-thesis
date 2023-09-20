@@ -1,8 +1,12 @@
 algo: "ppolag"
+state_dependent_std: False
+std_dev_init: 1.0
+std_dev_trainable: False
+
 lagrange:
   type: pid
   params:
-    initial_value: 50.0
+    initial_value: 20.0
     kp: 0.01
     ki: 0.001
     kd: 0.05
@@ -18,19 +22,19 @@ lag_lr: 0.1
 schedule: False
 schedule_factor: 0.9998
 
-actor_dist_bound: 0 # float; if <= 0, actions are unbounded,
-                    # if > 0 action range is symmetric [-bound, bound]
+actor_dist_bound: 10  # float; if <= 0, actions are unbounded,
+                      # if > 0 action range is symmetric [-bound, bound]
 
 loss_module:
-  clip_epsilon: 0.2
-  entropy_coef: 0.01
-  entropy_bonus: True
+  clip_epsilon: 0.15
+  entropy_coef: 0.00
+  entropy_bonus: False
   critic_coef: 0.5
   gamma: 1
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
   lagrangian_delay: 10
-  cost_scale: 1.0
+  cost_scale: 0.1
 
 estimator:
   gamma: 1

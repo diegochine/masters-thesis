@@ -114,10 +114,10 @@ class PPOLagLoss(ClipPPOLoss):
         td_out.set("loss_pi", loss_pi)
 
         # compute entropy and entropy loss
-        entropy = self.get_entropy_bonus(dist)
-        if self.entropy_bonus:
-            td_out.set("loss_entropy", -self.entropy_coef * entropy.mean())
-        td_out.set("entropy", entropy.mean().detach())
+        # entropy = self.get_entropy_bonus(dist)
+        # if self.entropy_bonus:
+        #     td_out.set("loss_entropy", -self.entropy_coef * entropy.mean())
+        # td_out.set("entropy", entropy.mean().detach())
 
         # compute critics losses
         target = tmp_td.get(self.value_target_key)

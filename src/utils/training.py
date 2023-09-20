@@ -17,7 +17,7 @@ from torchrl.data import TensorDictReplayBuffer, UnboundedDiscreteTensorSpec
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
     RewardScaling, default_info_dict_reader, EnvBase
 from torchrl.envs.libs.gym import GymWrapper
-from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TanhNormal
+from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TanhNormal, TruncatedNormal
 from torchrl.objectives import LossModule
 from torchrl.objectives.value import GAE
 from torchrl.envs.utils import ExplorationType, set_exploration_type
@@ -143,12 +143,53 @@ def make_env(device: torch.device,
         e.transform[0].init_stats(num_iter=3, reduce_dim=0, cat_dim=0)
         e.transform[0].load_state_dict(t_state_dict)
     elif iter_init_stats > 0:
+        print('Initializing stats...')
         e.transform[0].init_stats(num_iter=iter_init_stats, reduce_dim=0, cat_dim=0)
     check_env_specs(e)
     return e
 
 
 ########################################################################################################################
+
+class ActorNet(nn.Module):
+
+    def __init__(self, cfg: DictConfig, env: EnvBase, device: torch.device):
+        super().__init__()
+        self.state_dependent_std = cfg.agent.state_dependent_std
+        if self.state_dependent_std:
+            self.net = nn.Sequential(
+                MLP(in_features=env.observation_spec['observation'].shape[0],
+                    out_features=env.action_spec.shape[-1],
+                    device=device,
+                    activation_class=nn.ReLU,
+                    **cfg.actor.net_spec),
+                NormalParamExtractor(),
+            )
+        else:
+            self.log_std = nn.Parameter(torch.full((env.action_spec.shape[-1],),
+                                                   np.log(cfg.agent.std_dev_init),
+                                                   device=device),
+                                        requires_grad=cfg.agent.std_dev_trainable)
+            self.net = nn.Sequential(
+                MLP(in_features=env.observation_spec['observation'].shape[0],
+                    out_features=env.action_spec.shape[-1],
+                    device=device,
+                    activation_class=nn.ReLU,
+                    **cfg.actor.net_spec),
+            )
+        # initialize last layer of actor_net to produce actions close to zero at the beginning
+        torch.nn.init.uniform_(self.net[0][-1].weight, -1e-3, 1e-3)
+
+    def forward(self, x):
+        x = self.net(x)
+        if self.state_dependent_std:
+            return x
+        else:
+            std = torch.exp(self.log_std)
+            if len(x.shape) > 1:  # must add batch dim
+                std = torch.tile(std, (x.shape[0], 1))
+            return x, std
+
 
 def get_agent_modules(env: EnvBase,
                       cfg: DictConfig,
@@ -163,18 +204,8 @@ def get_agent_modules(env: EnvBase,
         print(f"Running {name}:", module(env.reset()))
 
     if cfg.agent.algo == 'ppolag':
-        in_features = env.observation_spec['observation'].shape[0]
-        actor_net = nn.Sequential(
-            MLP(in_features=in_features,
-                out_features=2 * env.action_spec.shape[-1],
-                device=device,
-                activation_class=nn.ReLU,
-                **cfg.actor.net_spec),
-            NormalParamExtractor(),
-        )
-        # initialize last layer of actor_net to produce actions close to zero at the beginning
-        torch.nn.init.uniform_(actor_net[0][-1].weight, -1e-3, 1e-3)
-        distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TanhNormal
+        actor_net = ActorNet(cfg=cfg, env=env, device=device)
+        distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TruncatedNormal
         distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
                                                                             'max': cfg.agent.actor_dist_bound}
         policy_module = ProbabilisticActor(
@@ -188,6 +219,7 @@ def get_agent_modules(env: EnvBase,
             return_log_prob=True,  # we'll need the log-prob for the numerator of the importance weights
             default_interaction_type=ExplorationType.RANDOM,
         )
+        in_features = env.observation_spec['observation'].shape[0]
         critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=nn.ReLU,
                          **cfg.critic.net_spec)
         r_value_module = ValueOperator(
@@ -260,8 +292,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        rewards[:, 1] = rewards[:,
-                        1] / 500  # FIXME should not be hardcoded, works with cap_max = 1000, c = 0.5, w = 0.1
+        rewards[:, 1] = rewards[:, 1] / 500  # FIXME should not be hardcoded, works for cap_max = 1000, c = 0.5
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
@@ -354,6 +385,10 @@ def train_loop(cfg: DictConfig,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
                      'train/avg_violation': avg_violation / 500,
                      'train/max_steps': rollout_td["step_count"].max().item(),
+                     'train/loc_cvirt_in': wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0])),
+                     'train/scale_cvirt_in': wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0])),
+                     'train/loc_cvirt_out': wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1])),
+                     'train/scale_cvirt_out': wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 1])),
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"],
                      'debug/lag_lr': optim.param_groups[2]["lr"]}
