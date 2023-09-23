@@ -21,11 +21,11 @@ class NaiveLagrange(nn.Module):
         self.register_buffer('cost_limit', torch.tensor(cost_limit))
         self.proj = torch.nn.functional.softplus
 
-    def forward(self, tdict: TensorDictBase) -> float:
+    def forward(self, tdict: TensorDictBase, cost_scale: float) -> float:
         """Computes lagrangian loss.
         :param tdict: TensorDict with key 'avg_violation' containing the constraint violation of the last rollout.
         """
-        lagrangian_loss = -self.proj(self.lag) * (tdict.get('avg_violation').mean() - self.cost_limit)
+        lagrangian_loss = -self.proj(self.lag) * (tdict.get('avg_violation').mean() - self.cost_limit) * cost_scale
         # tdict.set('loss_lagrangian', lagrangian_loss)
         return lagrangian_loss
 

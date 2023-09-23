@@ -292,7 +292,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        rewards[:, 1] = rewards[:, 1] / 500  # FIXME should not be hardcoded, works for cap_max = 1000, c = 0.5
+        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - 500) / 500  # FIXME should not be hardcoded, works for cap_max = 1000, c = 0.5
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
@@ -383,7 +383,7 @@ def train_loop(cfg: DictConfig,
                                                  for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
-                     'train/avg_violation': avg_violation / 500,
+                     'train/avg_violation': max(0, avg_violation - 500) / 500,
                      'train/max_steps': rollout_td["step_count"].max().item(),
                      'train/loc_cvirt_in': wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0])),
                      'train/scale_cvirt_in': wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0])),

@@ -1,7 +1,7 @@
 algo: "ppolag"
-state_dependent_std: False
+state_dependent_std: True
 std_dev_init: 1.0
-std_dev_trainable: False
+std_dev_trainable: True
 
 lagrange:
   type: pid

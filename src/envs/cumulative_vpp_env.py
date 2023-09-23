@@ -86,9 +86,9 @@ class CumulativeVPPEnv(StandardVPPEnv):
             # i.e. E[cap(t)] >= c can be rewritten as E[cap_max - cap(t)] <= 1 - c
             free_storage = self.cap_max - np.mean(self.history['storage_capacity'])
             # storage is in [0, cap_max] but c is in [0, 1]
-            violation = max(0., free_storage - ((1 - self.cumulative_storage_bound) * self.cap_max))
+            constraint_cost = free_storage  # max(0., free_storage - ((1 - self.cumulative_storage_bound) * self.cap_max))
         else:
-            violation = 0.
-        reward = np.array([reward[0], violation])
+            constraint_cost = 0.
+        reward = np.array([reward[0], constraint_cost])
 
         return observations, reward, terminated, truncated, info

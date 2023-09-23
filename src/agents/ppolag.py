@@ -66,9 +66,9 @@ class PPOLagLoss(ClipPPOLoss):
         td_out = TensorDict({}, [])
 
         if self.step % self.lagrangian_delay == 0:
-            tmp_td = tmp_td.set('avg_violation', tdict.get('avg_violation') * self.cost_scale)
+            tmp_td = tmp_td.set('avg_violation', tdict.get('avg_violation'))
             # compute lagrangian loss
-            loss_lagrangian = self.lag(tmp_td)
+            loss_lagrangian = self.lag(tmp_td, cost_scale=self.cost_scale)
             td_out.set("loss_lagrangian", loss_lagrangian)
         self.step = (self.step + 1) % self.lagrangian_delay
         td_out = tensordict.merge_tensordicts(td_out, self.lag.get_logs())
