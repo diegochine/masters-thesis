@@ -159,7 +159,7 @@ class ActorNet(nn.Module):
         if self.state_dependent_std:
             self.net = nn.Sequential(
                 MLP(in_features=env.observation_spec['observation'].shape[0],
-                    out_features=env.action_spec.shape[-1],
+                    out_features=2 * env.action_spec.shape[-1],
                     device=device,
                     activation_class=nn.ReLU,
                     **cfg.actor.net_spec),
