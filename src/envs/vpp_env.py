@@ -41,6 +41,7 @@ class VPPEnv(Env):
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
                  use_safety_layer: bool = False,
+                 in_cap: int = 0,
                  wandb_run: wandb.sdk.wandb_run.Run | None = None):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
@@ -69,7 +70,7 @@ class VPPEnv(Env):
         self.c_grid = c_grid
         self.shift = shift
         self.cap_max = 1000
-        self.in_cap = 800
+        self.in_cap = in_cap
         self.c_diesel = 0.054
         self.p_diesel_max = 1200
 

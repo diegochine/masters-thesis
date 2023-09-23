@@ -26,7 +26,8 @@ class CumulativeVPPEnv(StandardVPPEnv):
                  savepath: str = None,
                  use_safety_layer: bool = False,
                  wandb_run: wandb.sdk.wandb_run.Run | None = None,
-                 cumulative_storage_bound: float = 0.5):
+                 cumulative_storage_bound: float = 0.5,
+                 **kwargs):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -47,7 +48,8 @@ class CumulativeVPPEnv(StandardVPPEnv):
                          savepath=savepath,
                          use_safety_layer=use_safety_layer,
                          bound_storage_in=True,
-                         wandb_run=wandb_run)
+                         wandb_run=wandb_run,
+                         **kwargs)
 
         # Here we define the observation and action spaces
         self.observation_space = Box(low=-np.inf, high=np.inf, shape=(self.N * 3 + 1,), dtype=np.float32)
