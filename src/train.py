@@ -77,6 +77,7 @@ def init_wandb(cfg):
     wandb.define_metric("debug/targets_reward", step_metric='train_step')
     wandb.define_metric("debug/preds_constraint", step_metric='train_step')
     wandb.define_metric("debug/targets_constraint", step_metric='train_step')
+    wandb.define_metric("debug/approx_kl", step_metric='train_step')
 
 
 @hydra.main(version_base="1.1", config_path="../configs", config_name="train.yaml")
@@ -99,13 +100,12 @@ def main(cfg: DictConfig) -> None:
     t_state_dict = env.transform[0].state_dict()
     del env
 
+    env_kwargs = [{'device': device, 't_state_dict': t_state_dict, 'wandb_run': None,
+                   **cfg.environment}] * cfg.training.num_envs
     # Initialize wandb
     if cfg.wandb.use_wandb:
         init_wandb(cfg)
-
-    env_kwargs = [{'device': device, 't_state_dict': t_state_dict, 'wandb_run': None,
-                   **cfg.environment}] * cfg.training.num_envs
-    env_kwargs[0]['wandb_run'] = wandb.run  # only log from the first training env
+        env_kwargs[0]['wandb_run'] = wandb.run  # only log from the first training env
 
     # Create data collector and replay buffer
     collector = MultiSyncDataCollector(
@@ -131,7 +131,8 @@ def main(cfg: DictConfig) -> None:
     eval_env.reset()
 
     optim = torch.optim.Adam([
-        {'params': [p for k, p in loss_module.named_parameters() if 'actor' in k], 'lr': cfg.agent.actor_lr},
+        {'params': [p for k, p in loss_module.named_parameters() if 'actor' in k],
+         'lr': cfg.agent.actor_lr, 'weight_decay': cfg.agent.actor_weight_decay},
         {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
         {'params': [p for k, p in loss_module.named_parameters() if 'lag' in k], 'lr': cfg.agent.lag_lr}
     ])

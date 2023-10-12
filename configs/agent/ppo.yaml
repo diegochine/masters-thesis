@@ -10,15 +10,16 @@ lagrange:
     kp: 0.01
     ki: 0.001
     kd: 0.05
-    d_delay: 1
-    alpha_p: 0.5
-    alpha_d: 0.5
-    cost_limit: 0
+    d_delay: 2
+    alpha_p: 0.05
+    alpha_d: 0.05
+    cost_limit: 500
     proj: "softplus"
 
 actor_lr: 0.01
 critic_lr: 0.01
 lag_lr: 0.1
+actor_weight_decay: 1e-2
 schedule: False
 schedule_factor: 0.9998
 
@@ -30,12 +31,14 @@ loss_module:
   entropy_coef: 0.00
   entropy_bonus: False
   critic_coef: 0.5
-  gamma: 1
+  gamma: 0.99
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
-  lagrangian_delay: 10
-  cost_scale: 0.1
+  lagrangian_delay: 50
+  target_kl: 0.05
+  reward_scale: 0.05
+  cost_scale: 0.01
 
 estimator:
-  gamma: 1
+  gamma: 0.99
   lmbda: 0.95

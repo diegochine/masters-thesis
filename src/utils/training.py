@@ -15,7 +15,7 @@ from torch import nn, Tensor
 from torchrl.collectors import DataCollectorBase
 from torchrl.data import TensorDictReplayBuffer, UnboundedDiscreteTensorSpec
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
-    RewardScaling, default_info_dict_reader, EnvBase
+    default_info_dict_reader, EnvBase
 from torchrl.envs.libs.gym import GymWrapper
 from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TanhNormal, TruncatedNormal
 from torchrl.objectives import LossModule
@@ -57,8 +57,6 @@ def make_env(device: torch.device,
              wandb_run: wandb.sdk.wandb_run.Run | None = None,
              max_steps: int | None = None,
              iter_init_stats: int = 1000,
-             reward_loc: float = 0.,
-             reward_scale: float = 1.,
              t_state_dict: dict | None = None,
              **kwargs) -> TransformedEnv:
     """Environment factory function.
@@ -133,8 +131,6 @@ def make_env(device: torch.device,
         StepCounter(max_steps=max_steps),  # maximum steps per episode
         RewardSum(),  # track sum of rewards over episodes
     ]
-    if reward_loc != 0. or reward_scale != 1.:
-        transforms.append(RewardScaling(reward_loc, reward_scale))  # scale rewards
 
     e = TransformedEnv(torchrl_env, Compose(*transforms))
 
@@ -241,16 +237,11 @@ def get_agent_modules(env: EnvBase,
         init_module(r_value_module, 'reward value function')
         init_module(c_value_module, 'constraint value function')
 
-        r_advantage_module = GAE(
-            value_network=r_value_module, average_gae=True,
-            advantage_key="r_advantage", value_target_key="r_value_target", value_key='r_state_value',
-            **cfg.agent.estimator,
-        )
-        c_advantage_module = GAE(
-            value_network=c_value_module, average_gae=True,
-            advantage_key="c_advantage", value_target_key="c_value_target", value_key='c_state_value',
-            **cfg.agent.estimator,
-        )
+        r_advantage_module = GAE(value_network=r_value_module, average_gae=True, **cfg.agent.estimator)
+        r_advantage_module.set_keys(advantage='r_advantage', value_target='r_value_target', value='r_state_value')
+        c_advantage_module = GAE(value_network=c_value_module, average_gae=True, **cfg.agent.estimator)
+        c_advantage_module.set_keys(advantage='c_advantage', value_target='c_value_target', value='c_state_value')
+
         if cfg.agent.lagrange.type == 'naive':
             lagrangian = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
                                        cost_limit=cfg.agent.lagrange.params.cost_limit)
@@ -258,6 +249,7 @@ def get_agent_modules(env: EnvBase,
             lagrangian = PIDLagrange(**cfg.agent.lagrange.params)
         else:
             raise ValueError(f'Unknown lagrange type {cfg.agent.lagrange}, either naive or pid')
+
         loss_module = PPOLagLoss(
             actor=policy_module,
             critic=r_value_module,
@@ -265,16 +257,12 @@ def get_agent_modules(env: EnvBase,
             r_value_estimator=r_advantage_module,
             c_value_estimator=c_advantage_module,
             lagrangian=lagrangian,
-            r_advantage_key=r_advantage_module.advantage_key,
-            c_advantage_key=c_advantage_module.advantage_key,
-            r_value_target_key=r_advantage_module.value_target_key,
-            c_value_target_key=c_advantage_module.value_target_key,
-            r_value_key=r_advantage_module.value_key,
-            c_value_key=c_advantage_module.value_key,
             **cfg.agent.loss_module
         )
+
     else:
         raise ValueError(f'Unrecognized algo {cfg.agent.algo}')
+
     return loss_module, policy_module, (actor_net, critic_net, safe_critic_net)
 
 
@@ -292,7 +280,8 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - 500) / 500  # FIXME should not be hardcoded, works for cap_max = 1000, c = 0.5
+        # FIXME should not be hardcoded, works for cap_max = 1000, c = 0.5
+        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - 500) / 500
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
@@ -318,6 +307,7 @@ def get_rollout_scores(rollout_td: TensorDictBase, reduce: bool = True) -> Tenso
     cumrewards = rollout_td['next', 'episode_reward'].reshape(-1, 2)
     instances = rollout_td['instance'].reshape(-1, 1)
     rewards = torch.cat([cumrewards, instances], dim=1)[dones.squeeze()]
+    assert dones.sum().item() > 0, "No done found in rollout_td, increase frames_per_batch or decrease num_envs"
     if reduce:
         avg_score = rewards[:, 0].mean().item()
         avg_violation = rewards[:, 1].mean().item()
@@ -358,9 +348,8 @@ def train_loop(cfg: DictConfig,
         rewards = get_rollout_scores(rollout_td, reduce=False)
         avg_violation = rewards[:, 1].mean().item()
         rollout_td['avg_violation'] = torch.full(rollout_td.batch_size, avg_violation)
+        replay_buffer.extend(rollout_td.reshape(-1).cpu())
         for epoch in range(cfg.training.num_epochs):
-            data_view = rollout_td.reshape(-1)
-            replay_buffer.extend(data_view.cpu())
             for b in range(num_batches):
                 subdata = replay_buffer.sample(cfg.training.batch_size)
                 loss_info = loss_module(subdata.to(device))
