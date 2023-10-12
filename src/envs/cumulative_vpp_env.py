@@ -22,6 +22,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
                  c_grid: np.ndarray,
                  shift: np.ndarray,
                  controller: str,
+                 variant: str,
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
                  use_safety_layer: bool = False,
@@ -49,6 +50,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
                          use_safety_layer=use_safety_layer,
                          bound_storage_in=True,
                          wandb_run=wandb_run,
+                         variant=variant,
                          **kwargs)
 
         # Here we define the observation and action spaces

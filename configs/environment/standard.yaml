@@ -1,5 +1,5 @@
 max_steps: 96
-variant: standard
+env_type: standard
 controller: unify
 safety_layer: False
 

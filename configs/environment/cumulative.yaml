@@ -1,5 +1,5 @@
 max_steps: 96
-variant: cumulative
+env_type: cumulative
 controller: unify
 safety_layer: False
 in_cap: 0

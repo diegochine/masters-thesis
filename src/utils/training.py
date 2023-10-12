@@ -46,6 +46,7 @@ def seed_everything(seed: int):
 
 ########################################################################################################################
 def make_env(device: torch.device,
+             env_type: str,
              variant: str,
              controller: str | None = None,
              predictions_path: str | None = None,
@@ -61,7 +62,8 @@ def make_env(device: torch.device,
              **kwargs) -> TransformedEnv:
     """Environment factory function.
         :param device: torch.device to use
-        :param variant: environment variant, one of {toy, standard, cumulative}
+        :param env_type: environment type, one of {toy, standard, cumulative}
+        :param variant: environment variant, one of {cvirt_in, cvirt_out, both_cvirts}
         :param controller: controller type, one of {rl, unify}
         :param predictions_path: path to predictions file (only for standard and cumulative variants)
         :param prices_path: path to prices file (only for standard and cumulative variants)
@@ -77,9 +79,9 @@ def make_env(device: torch.device,
         :param reward_scale: reward scale (std dev)
         :param t_state_dict: state dict of observation normalization; if not provided, initialize stats
     """
-    if variant == 'toy':
+    if env_type == 'toy':
         base_env = SafeGridWorld(grid_size=5)
-    elif variant in {'standard', 'cumulative'}:
+    elif env_type in {'standard', 'cumulative'}:
         assert all(p is not None for p in [controller, predictions_path, prices_path, shifts_path])
         assert os.path.isfile(predictions_path), f"{predictions_path} does not exist"
         assert os.path.isfile(prices_path), f"{prices_path} does not exist"
@@ -100,7 +102,7 @@ def make_env(device: torch.device,
         else:
             raise Exception("test_split must be list of int, float, or None")
 
-        if variant == 'standard':
+        if env_type == 'standard':
             base_env = StandardVPPEnv(predictions=train_predictions,
                                       shift=shift,
                                       c_grid=c_grid,
@@ -109,7 +111,8 @@ def make_env(device: torch.device,
                                       savepath=None,
                                       use_safety_layer=safety_layer,
                                       bound_storage_in=False,
-                                      wandb_run=wandb_run)
+                                      wandb_run=wandb_run,
+                                      variant=variant)
         else:
             base_env = CumulativeVPPEnv(predictions=train_predictions,
                                         shift=shift,
@@ -118,7 +121,8 @@ def make_env(device: torch.device,
                                         noise_std_dev=noise_std_dev,
                                         savepath=None,
                                         use_safety_layer=safety_layer,
-                                        wandb_run=wandb_run)
+                                        wandb_run=wandb_run,
+                                        variant=variant)
     else:
         raise ValueError(f'Variant name must be in {VARIANTS}')
 

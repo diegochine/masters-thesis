@@ -23,6 +23,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                  c_grid: np.ndarray,
                  shift: np.ndarray,
                  controller: str,
+                 variant: str,
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
                  use_safety_layer: bool = False,
@@ -58,6 +59,9 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
             self.action_space = Box(low=-1, high=1, shape=(4,), dtype=np.float32)
         else:
             self.action_space = Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
+
+        assert variant in {'cvirt_in', 'cvirt_out', 'both_cvirts'}, f'unrecognised variant {variant}'
+        self.variant = variant
 
     def _get_observations(self) -> np.array:
         """
@@ -98,7 +102,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         :param action: numpy.array of shape (4, ); the decision variables for each timestep.
         :return: bool, float; True if the model is feasible, False otherwise and a list of cost for each timestep.
         """
-
+        assert self.variant == 'cvirt-in', f'variant {self.variant} not yet supported'
         # Check variables initialization
         self.assert_vars_init()
 
@@ -168,7 +172,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
     def _solve_unify(self, c_virt: np.array) -> Tuple[bool, int | float, np.array, float]:
         """
         Solve the optimization model with the greedy heuristic.
-        :param c_virt: numpy.array of shape (2, ); the virtual costs multiplied to output storage variable.
+        :param c_virt: numpy.array of shape (1, ) or (2,); the virtual cost(s) predicted by the RL agent.
         :return: tuple (bool, float, np.ndarray, float); feasible flag, cost, action and constraint violation cost.
         """
 
@@ -176,6 +180,17 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         self.assert_vars_init()
 
         c_virt = np.squeeze(c_virt)
+        if self.variant == 'cvirt_in':
+            assert c_virt.shape == (1,)
+            c_virt_in = c_virt
+            c_virt_out = 0.
+        elif self.variant == 'cvirt_out':
+            assert c_virt.shape == (1,)
+            c_virt_in = 0.
+            c_virt_out = c_virt
+        else:  # self.variant == 'both_cvirts'
+            assert c_virt.shape == (2,)
+            c_virt_in, c_virt_out = c_virt
 
         # Create an optimization model
         mod = Model()
@@ -212,7 +227,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
 
         # Objective function
         obf = (self.c_grid[self.timestep] * p_grid_out + self.c_diesel * p_diesel +
-               c_virt[0] * p_storage_in + c_virt[1] * p_storage_out - self.c_grid[self.timestep] * p_grid_in)
+               c_virt_in * p_storage_in + c_virt_out * p_storage_out - self.c_grid[self.timestep] * p_grid_in)
         mod.setObjective(obf)
 
         feasible = self.optimize(mod)
@@ -247,7 +262,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
             feasible_action = np.array([storage_in, storage_out, grid_in, diesel_power], dtype=np.float64)
 
             # update history
-            for k, v in (('c_virt_in', c_virt[0]), ('c_virt_out', c_virt[1]), ('energy_bought', grid_out), ('energy_sold', grid_in), ('diesel_power', diesel_power),
+            for k, v in (('c_virt_in', c_virt_in), ('c_virt_out', c_virt_out), ('energy_bought', grid_out),
+                         ('energy_sold', grid_in), ('diesel_power', diesel_power),
                          ('input_storage', storage_in), ('output_storage', storage_out), ('storage_capacity', old_cap_x)):
                 self.history[k].append(v)
 

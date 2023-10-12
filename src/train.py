@@ -12,33 +12,7 @@ from torchrl.envs import SerialEnv
 from tqdm import tqdm
 
 from src.envs import VPPEnv
-from src.utils import VARIANTS, RL_ALGOS, CONTROLLERS
 from src.utils.training import make_env, train_loop, get_agent_modules, seed_everything
-
-
-def get_args_dict():
-    """Constructs CLI argument parser, and returns dict of arguments."""
-    parser = argparse.ArgumentParser()
-
-    # Main arguments
-    parser.add_argument("logdir", type=str, help="Logging directory")
-    parser.add_argument("-v", "--variant", type=str, choices=VARIANTS,
-                        help="'toy': toy variant of the vpp problem (no battery);"
-                             "'standard': standard variant of the vpp problem;"
-                             "'cumulative': vpp problem with cumulative constraint on the battery")
-    parser.add_argument("-a", "--algo", type=str, choices=RL_ALGOS, default='PPOLag',
-                        help="Offline RL algorithms to use, 'PPOLag'")
-    parser.add_argument("-c", "--controller", type=str, choices=CONTROLLERS,
-                        help="Type of controller, 'rl' or 'unify'")
-
-    # Additional configs
-    parser.add_argument('-sl', '--safety-layer', action='store_true',
-                        help="If True, use safety layer to correct unfeasible actions at training time."
-                             "Safety Layer is always enabled at testing time to ensure action feasibility.")
-    parser.add_argument("--seed", type=int, default=0, help="Random seed")
-
-    args = vars(parser.parse_args())
-    return args
 
 
 def init_wandb(cfg):
