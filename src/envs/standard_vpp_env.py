@@ -263,8 +263,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
 
             # update history
             for k, v in (('c_virt_in', c_virt_in), ('c_virt_out', c_virt_out), ('energy_bought', grid_out),
-                         ('energy_sold', grid_in), ('diesel_power', diesel_power),
-                         ('input_storage', storage_in), ('output_storage', storage_out), ('storage_capacity', old_cap_x)):
+                         ('energy_sold', grid_in), ('diesel_power', diesel_power), ('input_storage', storage_in),
+                         ('output_storage', storage_out), ('storage_capacity', old_cap_x)):
                 self.history[k].append(v)
 
         cost = (self.c_grid[self.timestep] * grid_out + self.c_diesel * diesel_power - self.c_grid[

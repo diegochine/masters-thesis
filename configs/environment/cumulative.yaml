@@ -1,5 +1,6 @@
 max_steps: 96
 env_type: cumulative
+variant: both_cvirts
 controller: unify
 safety_layer: False
 in_cap: 0
