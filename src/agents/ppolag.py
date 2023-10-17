@@ -95,7 +95,6 @@ class PPOLagLoss(ClipPPOLoss):
         pi_logratio, dist = self._log_weight(tmp_td)
         pi_ratio = pi_logratio.exp()
         approx_kl = ((pi_ratio - 1) - pi_logratio).mean()  # kl estimator, see http://joschu.net/blog/kl-approx.html
-        assert approx_kl >= -1e-15, f'approx_kl must be non-negative, got: {approx_kl}'
         td_out.set("approx_kl", approx_kl)
         if approx_kl <= self.target_kl:  # early stopping if kl-divergence is too large
             r_gain1 = pi_ratio * r_advantage

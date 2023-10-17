@@ -1,5 +1,5 @@
 algo: "ppolag"
-state_dependent_std: True
+state_dependent_std: False
 std_dev_init: 1.0
 std_dev_trainable: True
 
@@ -19,7 +19,7 @@ lagrange:
 actor_lr: 0.01
 critic_lr: 0.01
 lag_lr: 0.1
-actor_weight_decay: 1e-2
+actor_weight_decay: 0.0
 schedule: False
 schedule_factor: 0.9998
 
@@ -35,7 +35,7 @@ loss_module:
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
   lagrangian_delay: 50
-  target_kl: 0.05
+  target_kl: 0.025
   reward_scale: 0.05
   cost_scale: 0.01
 

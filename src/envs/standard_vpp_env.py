@@ -53,15 +53,17 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                          **kwargs)
         self._bound_storage_in = bound_storage_in
 
+        assert variant in {'cvirt_in', 'cvirt_out', 'both_cvirts'}, f'unrecognised variant {variant}'
+        self.variant = variant
+
         # Here we define the observation and action spaces
         self.observation_space = Box(low=-np.inf, high=np.inf, shape=(self.N * 3 + 1,), dtype=np.float32)
         if self.controller == 'rl':
             self.action_space = Box(low=-1, high=1, shape=(4,), dtype=np.float32)
         else:
-            self.action_space = Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
+            act_shape = (2,) if self.variant == 'both_cvirts' else (1,)
+            self.action_space = Box(low=-np.inf, high=np.inf, shape=act_shape, dtype=np.float32)
 
-        assert variant in {'cvirt_in', 'cvirt_out', 'both_cvirts'}, f'unrecognised variant {variant}'
-        self.variant = variant
 
     def _get_observations(self) -> np.array:
         """
@@ -179,15 +181,14 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         # Check variables initialization
         self.assert_vars_init()
 
-        c_virt = np.squeeze(c_virt)
         if self.variant == 'cvirt_in':
             assert c_virt.shape == (1,)
-            c_virt_in = c_virt
+            c_virt_in = c_virt[0]
             c_virt_out = 0.
         elif self.variant == 'cvirt_out':
             assert c_virt.shape == (1,)
             c_virt_in = 0.
-            c_virt_out = c_virt
+            c_virt_out = c_virt[0]
         else:  # self.variant == 'both_cvirts'
             assert c_virt.shape == (2,)
             c_virt_in, c_virt_out = c_virt

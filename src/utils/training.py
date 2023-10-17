@@ -376,17 +376,29 @@ def train_loop(cfg: DictConfig,
                                                  for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
-                     'train/avg_violation': max(0, avg_violation - 500) / 500,
+                     'train/avg_violation': max(0, avg_violation - 500.) / 500.,
                      'train/max_steps': rollout_td["step_count"].max().item(),
-                     'train/loc_cvirt_in': wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0])),
-                     'train/scale_cvirt_in': wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0])),
-                     'train/loc_cvirt_out': wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1])),
-                     'train/scale_cvirt_out': wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 1])),
                      'debug/actor_lr': optim.param_groups[0]["lr"],
-                     'debug/critic_lr': optim.param_groups[1]["lr"],
-                     'debug/lag_lr': optim.param_groups[2]["lr"]}
+                     'debug/critic_lr': optim.param_groups[1]["lr"]}
+        if cfg.agent.lagrange.type == 'naive':
+            train_log['debug/lag_lr'] = optim.param_groups[2]["lr"]
+        if cfg.environment.variant == 'cvirt_in':
+            train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
+            train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
+            train_log['train/loc_cvirt_out'] = 0.
+            train_log['train/scale_cvirt_out'] = 0.
+        elif cfg.environment.variant == 'cvirt_out':
+            train_log['train/loc_cvirt_in'] = 0.
+            train_log['train/scale_cvirt_in'] = 0.
+            train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
+            train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
+        else:  # cfg.environment.variant == 'both_cvirts'
+            train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
+            train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
+            train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1])),
+            train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 1])),
 
-        pbar.update(rollout_td.numel())
+            pbar.update(rollout_td.numel())
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 1.2f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 1.2f}, " \
                     f"max steps = {train_log['train/max_steps']: 2d}"
