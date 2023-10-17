@@ -398,7 +398,7 @@ def train_loop(cfg: DictConfig,
             train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1])),
             train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 1])),
 
-            pbar.update(rollout_td.numel())
+        pbar.update(rollout_td.numel())
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 1.2f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 1.2f}, " \
                     f"max steps = {train_log['train/max_steps']: 2d}"
