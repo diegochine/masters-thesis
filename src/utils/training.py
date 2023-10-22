@@ -387,16 +387,20 @@ def train_loop(cfg: DictConfig,
             train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
             train_log['train/loc_cvirt_out'] = 0.
             train_log['train/scale_cvirt_out'] = 0.
+            train_log['train/loc_in_range'] = (rollout_td['loc'][:, 0].max() - rollout_td['loc'][:, 0].min()).item()
         elif cfg.environment.variant == 'cvirt_out':
             train_log['train/loc_cvirt_in'] = 0.
             train_log['train/scale_cvirt_in'] = 0.
             train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
+            train_log['train/loc_out_range'] = (rollout_td['loc'][:, 0].max() - rollout_td['loc'][:, 0].min()).item()
         else:  # cfg.environment.variant == 'both_cvirts'
             train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
             train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1])),
             train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 1])),
+            train_log['train/loc_in_range'] = (rollout_td['loc'][:, 0].max() - rollout_td['loc'][:, 0].min()).item()
+            train_log['train/loc_out_range'] = (rollout_td['loc'][:, 1].max() - rollout_td['loc'][:, 1].min()).item()
 
         pbar.update(rollout_td.numel())
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 1.2f}, " \
