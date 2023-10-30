@@ -408,7 +408,7 @@ def train_loop(cfg: DictConfig,
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 1.2f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 1.2f}, " \
                     f"max steps = {train_log['train/max_steps']: 2d}"
-        eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores)
+        eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
 
         pbar.set_description(f"{train_str} | {eval_str} ")
         if cfg.wandb.use_wandb:
