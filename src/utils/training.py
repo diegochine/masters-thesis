@@ -270,11 +270,12 @@ def get_agent_modules(env: EnvBase,
     return loss_module, policy_module, (actor_net, critic_net, safe_critic_net)
 
 
-def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict):
+def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict, cost_limit: int):
     """Evaluate the policy on the evaluation environment.
     :param eval_env: environment to evaluate on.
     :param policy_module: policy to evaluate.
     :param optimal_scores: optimal costs for each instance in the evaluation environment.
+    :param cost_limit: cost limit of the agent.
     """
     with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
         # execute a rollout with the trained policy
@@ -285,7 +286,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
         # FIXME should not be hardcoded, works for cap_max = 1000, c = 0.5
-        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - 500) / 500
+        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - cost_limit) / cost_limit
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
@@ -345,6 +346,7 @@ def train_loop(cfg: DictConfig,
     optimal_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
                       for instance in cfg.environment.instances}
     num_batches = cfg.training.frames_per_batch // cfg.training.batch_size
+    cost_limit = cfg.agent.lagrange.params.cost_limit
     train_step = 0
     # Iterate over the collector until it reaches frames_per_batch frames
     for it, rollout_td in enumerate(collector):
@@ -376,7 +378,7 @@ def train_loop(cfg: DictConfig,
                                                  for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
-                     'train/avg_violation': max(0, avg_violation - 500.) / 500.,
+                     'train/avg_violation': max(0, avg_violation - cost_limit) / cost_limit,
                      'train/max_steps': rollout_td["step_count"].max().item(),
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"]}
