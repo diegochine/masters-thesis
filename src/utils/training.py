@@ -288,7 +288,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - cost_limit) / cost_limit
+        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - cost_limit) / (1000 - cost_limit)
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
                     'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
