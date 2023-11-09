@@ -48,12 +48,12 @@ class PIDLagrange(nn.Module):
 
     def forward(self, tdict: TensorDictBase, **kwargs) -> float:
         """Updates the PID controller. """
-        avg_violation = tdict.get('avg_violation').mean()
-        delta = avg_violation - self.cost_limit
+        Jc = tdict['avg_cost']
+        delta = tdict['avg_violation']
         self.pid_i = self.proj(self.pid_i + delta)
 
         self.delta_p = self.alpha_p * self.delta_p + (1 - self.alpha_p) * delta
-        self.cost_d = self.alpha_d * self.cost_d + (1 - self.alpha_d) * avg_violation
+        self.cost_d = self.alpha_d * self.cost_d + (1 - self.alpha_d) * Jc
         pid_d = self.proj(self.cost_d - self.prev_costs[0])
         pid_o = self.proj(self.kp * self.delta_p + self.ki * self.pid_i + self.kd * pid_d)
 

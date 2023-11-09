@@ -25,8 +25,7 @@ class NaiveLagrange(nn.Module):
         """Computes lagrangian loss.
         :param tdict: TensorDict with key 'avg_violation' containing the constraint violation of the last rollout.
         """
-        lagrangian_loss = -self.proj(self.lag) * (tdict.get('avg_violation').mean() - self.cost_limit) * cost_scale
-        # tdict.set('loss_lagrangian', lagrangian_loss)
+        lagrangian_loss = -self.proj(self.lag) * (tdict['avg_violation']) * cost_scale
         return lagrangian_loss
 
     def get(self):

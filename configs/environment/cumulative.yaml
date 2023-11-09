@@ -4,6 +4,8 @@ variant: both_cvirts
 controller: unify
 safety_layer: False
 in_cap: 0
+cost_fn_type: sparse
+storage_io_bound: 200
 
 predictions_path: ${hydra:runtime.cwd}/src/data/Dataset10k.csv
 prices_path: ${hydra:runtime.cwd}/src/data/gmePrices.npy

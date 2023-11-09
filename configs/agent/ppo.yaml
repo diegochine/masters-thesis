@@ -5,15 +5,16 @@ std_dev_trainable: True
 
 lagrange:
   type: pid
+  positive_violation: False
   params:
-    initial_value: 20.0
+    initial_value: 15.0
     kp: 0.01
     ki: 0.001
     kd: 0.05
-    d_delay: 2
-    alpha_p: 0.05
-    alpha_d: 0.05
-    cost_limit: 500
+    d_delay: 1
+    alpha_p: 0.0
+    alpha_d: 0.0
+    cost_limit: 1000
     proj: "softplus"
 
 actor_lr: 0.01
@@ -31,7 +32,7 @@ loss_module:
   entropy_coef: 0.00
   entropy_bonus: False
   critic_coef: 0.5
-  gamma: 0.99
+  gamma: 1.0
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
   lagrangian_delay: 50
@@ -40,5 +41,5 @@ loss_module:
   cost_scale: 0.01
 
 estimator:
-  gamma: 0.99
+  gamma: 1.0
   lmbda: 0.95

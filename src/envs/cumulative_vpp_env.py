@@ -28,6 +28,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
                  use_safety_layer: bool = False,
                  wandb_run: wandb.sdk.wandb_run.Run | None = None,
                  cumulative_storage_bound: float = 0.5,
+                 cost_fn_type: str = 'sparse',
                  **kwargs):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
@@ -39,6 +40,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
         :param use_safety_layer: bool, if True enable safety layer during training.
         :param cumulative_storage_bound: float; the coefficient of the cumulative constraint.
                The cumulative constraint states that on average storage capacity should be >= cumulative_storage_bound.
+        :param cost_fn_type: str; the type of cost function, either 'sparse' or 'dense'.
         """
 
         super().__init__(predictions=predictions,
@@ -64,6 +66,8 @@ class CumulativeVPPEnv(StandardVPPEnv):
         # i.e. on average storage capacity should be >= cumulative_storage_bound
         assert 0 <= cumulative_storage_bound <= 1, f'cumulative_storage_bound must be in [0, 1], received: {cumulative_storage_bound}'
         self.cumulative_storage_bound = cumulative_storage_bound
+        assert cost_fn_type in {'sparse', 'dense'}, f'cost_fn_type must be either "sparse" or "dense", received: {cost_fn_type}'
+        self.cost_fn_type = cost_fn_type
 
     def _solve_rl(self, action: np.array) -> Tuple[bool, int | float, np.array, float]:
         """
@@ -84,12 +88,12 @@ class CumulativeVPPEnv(StandardVPPEnv):
                                     additional information.
         """
         observations, reward, terminated, truncated, info = super().step(action)
-        if self.timestep == self.N:
-            # As we need constraint in the form E[Z] <= b, we consider average free storage insted of occupied storage
-            # i.e. E[cap(t)] >= c can be rewritten as E[cap_max - cap(t)] <= 1 - c
-            free_storage = self.cap_max - np.mean(self.history['storage_capacity'])
-            # storage is in [0, cap_max] but c is in [0, 1]
-            constraint_cost = free_storage  # max(0., free_storage - ((1 - self.cumulative_storage_bound) * self.cap_max))
+        # As we need constraint in the form E[Z] <= b, we consider average free storage insted of occupied storage
+        # i.e. E[cap(t)] >= c can be rewritten as E[cap_max - cap(t)] <= 1 - c
+        if self.cost_fn_type == 'dense':
+            constraint_cost = 1 / self.N * (self.cap_max - self.storage)
+        elif self.timestep == self.N:  # sparse cost function
+            constraint_cost = self.cap_max - np.mean(self.history['storage_capacity'])
         else:
             constraint_cost = 0.
         reward = np.array([reward[0], constraint_cost])

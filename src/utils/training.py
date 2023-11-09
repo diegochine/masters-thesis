@@ -9,7 +9,7 @@ import torch
 import tqdm
 import wandb
 from omegaconf import ListConfig, DictConfig
-from tensordict import TensorDictBase
+from tensordict import TensorDictBase, TensorDict
 from tensordict.nn import NormalParamExtractor, TensorDictModule
 from torch import nn, Tensor
 from torchrl.collectors import DataCollectorBase
@@ -59,6 +59,8 @@ def make_env(device: torch.device,
              max_steps: int | None = None,
              iter_init_stats: int = 1000,
              t_state_dict: dict | None = None,
+             cost_fn_type: str = 'sparse',
+             storage_io_bound: int = 200,
              **kwargs) -> TransformedEnv:
     """Environment factory function.
         :param device: torch.device to use
@@ -75,8 +77,6 @@ def make_env(device: torch.device,
         :param wandb_run: optional, wandb.Run object used to log
         :param max_steps: maximum number of steps per episode
         :param iter_init_stats: number of iterations to initialize stats
-        :param reward_loc: reward location (mean)
-        :param reward_scale: reward scale (std dev)
         :param t_state_dict: state dict of observation normalization; if not provided, initialize stats
     """
     if env_type == 'toy':
@@ -112,7 +112,8 @@ def make_env(device: torch.device,
                                       use_safety_layer=safety_layer,
                                       bound_storage_in=False,
                                       wandb_run=wandb_run,
-                                      variant=variant)
+                                      variant=variant,
+                                      storage_io_bound=storage_io_bound)
         else:
             base_env = CumulativeVPPEnv(predictions=train_predictions,
                                         shift=shift,
@@ -122,7 +123,9 @@ def make_env(device: torch.device,
                                         savepath=None,
                                         use_safety_layer=safety_layer,
                                         wandb_run=wandb_run,
-                                        variant=variant)
+                                        variant=variant,
+                                        cost_fn_type=cost_fn_type,
+                                        storage_io_bound=storage_io_bound)
     else:
         raise ValueError(f'Variant name must be in {VARIANTS}')
 
@@ -285,7 +288,6 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        # FIXME should not be hardcoded, works for cap_max = 1000, c = 0.5
         rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - cost_limit) / cost_limit
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
                     'eval/avg_violation': rewards[:, 1].mean().item(),
@@ -350,11 +352,17 @@ def train_loop(cfg: DictConfig,
     train_step = 0
     # Iterate over the collector until it reaches frames_per_batch frames
     for it, rollout_td in enumerate(collector):
-        # get dones to compute average cumulative reward and constraint violation
+        # get dones to compute average cumulative reward and constraint cost and violation
         rewards = get_rollout_scores(rollout_td, reduce=False)
-        avg_violation = rewards[:, 1].mean().item()
-        rollout_td['avg_violation'] = torch.full(rollout_td.batch_size, avg_violation)
+        avg_cost = rewards[:, 1].mean().item()
+        avg_violation = (rewards[:, 1] - cost_limit).mean().item()
+        if cfg.agent.lagrange.positive_violation:
+            avg_violation = max(0., avg_violation)
+        cost_td = TensorDict({'avg_cost': avg_cost, 'avg_violation': avg_violation}, [])
+        loss_module.update_cost_estimate(cost_td)
         replay_buffer.extend(rollout_td.reshape(-1).cpu())
+
+        # Optimization: compute loss and optimize
         for epoch in range(cfg.training.num_epochs):
             for b in range(num_batches):
                 subdata = replay_buffer.sample(cfg.training.batch_size)
@@ -378,7 +386,7 @@ def train_loop(cfg: DictConfig,
                                                  for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
-                     'train/avg_violation': max(0, avg_violation - cost_limit) / cost_limit,
+                     'train/avg_violation': max(0, avg_violation) / (1000 - cost_limit),
                      'train/max_steps': rollout_td["step_count"].max().item(),
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"]}

@@ -28,6 +28,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                  savepath: str = None,
                  use_safety_layer: bool = False,
                  bound_storage_in: bool = True,
+                 storage_io_bound: int = 200,
                  wandb_run: wandb.sdk.wandb_run.Run | None = None,
                  **kwargs):
         """
@@ -40,6 +41,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         :param use_safety_layer: bool, if True enable safety layer during training.
         :param bound_storage_in: bool; used to switch between enforcing p_storage_in var upper bound via the optimization model
                                 or letting the rl agent learn the constraint.
+        :param storage_io_bound: int, upper bound for storage_{in, out} variables during online step.
         """
 
         super().__init__(predictions=predictions,
@@ -63,7 +65,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         else:
             act_shape = (2,) if self.variant == 'both_cvirts' else (1,)
             self.action_space = Box(low=-np.inf, high=np.inf, shape=act_shape, dtype=np.float32)
-
+        assert 0 <= storage_io_bound <= self.cap_max, f'storage_io_bound must be between 0 and {self.cap_max}, got {storage_io_bound}'
+        self.storage_io_bound = storage_io_bound
 
     def _get_observations(self) -> np.array:
         """
@@ -219,8 +222,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         mod.addConstr(p_storage_out <= self.storage)
 
         if self._bound_storage_in:
-            mod.addConstr(p_storage_in <= 200)
-        mod.addConstr(p_storage_out <= 200)
+            mod.addConstr(p_storage_in <= self.storage_io_bound)
+        mod.addConstr(p_storage_out <= self.storage_io_bound)
 
         # Diesel and grid bounds
         mod.addConstr(p_diesel <= self.p_diesel_max)
@@ -239,7 +242,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         grid_in = mod.getVarByName('p_grid_in').X
         grid_out = mod.getVarByName('p_grid_out').X
 
-        constraint_violation = max(0., storage_in - 200.)
+        constraint_violation = max(0., storage_in - self.storage_io_bound)
 
         if constraint_violation > 0.:  # storage_in bound constraint has been violated
             if self.use_safety_layer:

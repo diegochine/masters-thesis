@@ -37,6 +37,7 @@ class PPOLagLoss(ClipPPOLoss):
         self.convert_to_functional(safe_critic, 'safe_critic', create_target_params=False)
         self.r_value_estimator = r_value_estimator
         self.c_value_estimator = c_value_estimator
+        self.cost_td = None
         self.register_buffer('lagrangian_delay', torch.tensor(lagrangian_delay))
         self.register_buffer('step', torch.tensor(0))
         self.register_buffer('cost_scale', torch.tensor(cost_scale))
@@ -52,13 +53,17 @@ class PPOLagLoss(ClipPPOLoss):
             self._out_keys = keys
         return self._out_keys
 
+    def update_cost_estimate(self, tdict: TensorDictBase):
+        """Updates the costs of the lagrangian multiplier."""
+        self.cost_td = tdict.clone(False)
+
     def forward(self, tdict: TensorDictBase) -> TensorDictBase:
         tmp_td = tdict.clone(False)
         td_out = TensorDict({}, [])
 
         if self.step % self.lagrangian_delay == 0:
             # compute lagrangian loss
-            loss_lagrangian = self.lag(tmp_td, cost_scale=self.cost_scale)
+            loss_lagrangian = self.lag(self.cost_td, cost_scale=self.cost_scale)
             td_out.set("loss_lagrangian", loss_lagrangian)
             td_out = tensordict.merge_tensordicts(td_out, self.lag.get_logs())
         self.step = (self.step + 1) % self.lagrangian_delay
