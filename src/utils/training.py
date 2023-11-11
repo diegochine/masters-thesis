@@ -283,16 +283,18 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
     with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
         # execute a rollout with the trained policy
         eval_rollout = eval_env.rollout(100, policy_module)
-        rewards = get_rollout_scores(eval_rollout, reduce=False)
+        rewards = get_rollout_scores(eval_rollout)
         # normalize scores according to optimal score of each instance
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
+        avg_cost = rewards[:, 1].mean().item()
         rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
         rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - cost_limit) / (1000 - cost_limit)
         eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
+                    'eval/avg_cost': avg_cost,
                     'eval/avg_violation': rewards[:, 1].mean().item(),
-                    'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
-                    'eval/all_violations': wandb.Histogram(np_histogram=np.histogram(rewards[:, 1]))
+                    # 'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
+                    # 'eval/all_violations': wandb.Histogram(np_histogram=np.histogram(rewards[:, 1]))
                     }
         eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 1.2f}, " \
                    f"avg violation = {eval_log['eval/avg_violation']: 1.2f}"
@@ -303,24 +305,17 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
     return {**eval_log, **actions_log}, eval_str
 
 
-def get_rollout_scores(rollout_td: TensorDictBase, reduce: bool = True) -> Tensor | Tuple[float, float]:
+def get_rollout_scores(rollout_td: TensorDictBase) -> Tensor | Tuple[float, float]:
     """Get the scores from a rollout.
     :param rollout_td: rollout to get the scores from.
-    :param reduce: whether to reduce the scores to a single value (mean) or not.
-    :return: (mean score, mean violation) if reduce;
-        else, tensor of shape (n_dones, 3) with scores, violations and instance number.
+    :return: tensor of shape (n_dones, 3) with scores, violations and instance number.
     """
     dones = (rollout_td[('next', 'done')] | rollout_td[('next', 'truncated')]).reshape(-1)
     cumrewards = rollout_td['next', 'episode_reward'].reshape(-1, 2)
     instances = rollout_td['instance'].reshape(-1, 1)
     rewards = torch.cat([cumrewards, instances], dim=1)[dones.squeeze()]
     assert dones.sum().item() > 0, "No done found in rollout_td, increase frames_per_batch or decrease num_envs"
-    if reduce:
-        avg_score = rewards[:, 0].mean().item()
-        avg_violation = rewards[:, 1].mean().item()
-        return avg_score, avg_violation
-    else:
-        return rewards
+    return rewards
 
 
 def train_loop(cfg: DictConfig,
@@ -353,7 +348,7 @@ def train_loop(cfg: DictConfig,
     # Iterate over the collector until it reaches frames_per_batch frames
     for it, rollout_td in enumerate(collector):
         # get dones to compute average cumulative reward and constraint cost and violation
-        rewards = get_rollout_scores(rollout_td, reduce=False)
+        rewards = get_rollout_scores(rollout_td)
         avg_cost = rewards[:, 1].mean().item()
         avg_violation = (rewards[:, 1] - cost_limit).mean().item()
         if cfg.agent.lagrange.positive_violation:
@@ -386,6 +381,7 @@ def train_loop(cfg: DictConfig,
                                                  for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
+                     'train/avg_cost': avg_cost,
                      'train/avg_violation': max(0, avg_violation) / (1000 - cost_limit),
                      'train/max_steps': rollout_td["step_count"].max().item(),
                      'debug/actor_lr': optim.param_groups[0]["lr"],
@@ -407,8 +403,8 @@ def train_loop(cfg: DictConfig,
         else:  # cfg.environment.variant == 'both_cvirts'
             train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
-            train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1])),
-            train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 1])),
+            train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1]))
+            train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 1]))
             train_log['train/loc_in_range'] = (rollout_td['loc'][:, 0].max() - rollout_td['loc'][:, 0].min()).item()
             train_log['train/loc_out_range'] = (rollout_td['loc'][:, 1].max() - rollout_td['loc'][:, 1].min()).item()
 
