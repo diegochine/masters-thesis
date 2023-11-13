@@ -289,8 +289,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
             assert 0 <= self.storage <= self.cap_max, f'{self.storage}'
             assert storage_in <= self.cap_max - old_cap_x, f'{storage_in}'
             assert storage_out <= old_cap_x, f'{storage_out}'
-            assert 0 <= storage_in <= 200, f'{storage_in}'
-            assert 0 <= storage_out <= 200, f'{storage_out}'
+            assert 0 <= storage_in <= self.storage_io_bound, f'{storage_in}'
+            assert 0 <= storage_out <= self.storage_io_bound, f'{storage_out}'
             power_balance = self.p_ren_pv_real[
                                 self.timestep] + storage_out + grid_out + diesel_power - storage_in - grid_in
         else:  # simplified environment with no battery
