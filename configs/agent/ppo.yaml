@@ -22,7 +22,8 @@ critic_lr: 0.01
 lag_lr: 0.01
 actor_weight_decay: 0.0
 schedule: False
-schedule_factor: 0.9998
+orthogonal_init: False
+activation: "tanh"
 
 actor_dist_bound: 10  # float; if <= 0, actions are unbounded,
                       # if > 0 action range is symmetric [-bound, bound]

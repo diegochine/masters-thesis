@@ -10,7 +10,7 @@ import tqdm
 import wandb
 from omegaconf import ListConfig, DictConfig
 from tensordict import TensorDictBase, TensorDict
-from tensordict.nn import NormalParamExtractor, TensorDictModule
+from tensordict.nn import NormalParamExtractor, TensorDictModule, AddStateIndependentNormalScale
 from torch import nn, Tensor
 from torchrl.collectors import DataCollectorBase
 from torchrl.data import TensorDictReplayBuffer, UnboundedDiscreteTensorSpec
@@ -154,44 +154,11 @@ def make_env(device: torch.device,
 
 ########################################################################################################################
 
-class ActorNet(nn.Module):
-
-    def __init__(self, cfg: DictConfig, env: EnvBase, device: torch.device):
-        super().__init__()
-        self.state_dependent_std = cfg.agent.state_dependent_std
-        if self.state_dependent_std:
-            self.net = nn.Sequential(
-                MLP(in_features=env.observation_spec['observation'].shape[0],
-                    out_features=2 * env.action_spec.shape[-1],
-                    device=device,
-                    activation_class=nn.ReLU,
-                    **cfg.actor.net_spec),
-                NormalParamExtractor(),
-            )
-        else:
-            self.log_std = nn.Parameter(torch.full((env.action_spec.shape[-1],),
-                                                   np.log(cfg.agent.std_dev_init),
-                                                   device=device),
-                                        requires_grad=cfg.agent.std_dev_trainable)
-            self.net = nn.Sequential(
-                MLP(in_features=env.observation_spec['observation'].shape[0],
-                    out_features=env.action_spec.shape[-1],
-                    device=device,
-                    activation_class=nn.ReLU,
-                    **cfg.actor.net_spec),
-            )
-        # initialize last layer of actor_net to produce actions close to zero at the beginning
-        torch.nn.init.uniform_(self.net[0][-1].weight, -1e-3, 1e-3)
-
-    def forward(self, x):
-        x = self.net(x)
-        if self.state_dependent_std:
-            return x
-        else:
-            std = torch.exp(self.log_std)
-            if len(x.shape) > 1:  # must add batch dim
-                std = torch.tile(std, (x.shape[0], 1))
-            return x, std
+def orthogonal_init(mlp, scale):
+    for layer in mlp.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, scale)
+            layer.bias.data.zero_()
 
 
 def get_agent_modules(env: EnvBase,
@@ -206,69 +173,92 @@ def get_agent_modules(env: EnvBase,
     def init_module(module, name):
         print(f"Running {name}:", module(env.reset()))
 
-    if cfg.agent.algo == 'ppolag':
-        actor_net = ActorNet(cfg=cfg, env=env, device=device)
-        distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TruncatedNormal
-        distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
-                                                                            'max': cfg.agent.actor_dist_bound}
-        policy_module = ProbabilisticActor(
-            module=TensorDictModule(
-                module=actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
-            ),
-            spec=env.action_spec,
-            in_keys=["loc", "scale"],
-            distribution_class=distribution_class,
-            distribution_kwargs=distribution_kwargs,
-            return_log_prob=True,  # we'll need the log-prob for the numerator of the importance weights
-            default_interaction_type=ExplorationType.RANDOM,
+    assert cfg.agent.algo == 'ppolag', "only ppolag supported"
+    activation_class = nn.ReLU if cfg.agent.activation == 'relu' else nn.Tanh
+
+    if cfg.agent.state_dependent_std:  # scale outputted by net
+        actor_net = nn.Sequential(
+            MLP(in_features=env.observation_spec['observation'].shape[0],
+                out_features=2 * env.action_spec.shape[-1],
+                device=device,
+                activation_class=activation_class,
+                **cfg.actor.net_spec),
+            NormalParamExtractor(),
         )
-        in_features = env.observation_spec['observation'].shape[0]
-        critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=nn.ReLU,
-                         **cfg.critic.net_spec)
-        r_value_module = ValueOperator(
-            module=critic_net,
-            in_keys=["observation"],
-            out_keys=["r_state_value"],
+    else:  # scale independent of state
+        actor_net = nn.Sequential(
+            MLP(in_features=env.observation_spec['observation'].shape[0],
+                out_features=env.action_spec.shape[-1],
+                device=device,
+                activation_class=activation_class,
+                **cfg.actor.net_spec),
+            AddStateIndependentNormalScale(env.action_spec.shape[-1])
         )
-        safe_critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=nn.ReLU,
-                              # ensure cost critic only outputs positive values by adding final ReLU
-                              activate_last_layer=cfg.critic.constraint_activation,
-                              **cfg.critic.net_spec)
-        c_value_module = ValueOperator(
-            module=safe_critic_net,
-            in_keys=["observation"],
-            out_keys=["c_state_value"],
-        )
+    if cfg.agent.orthogonal_init:
+        orthogonal_init(actor_net[0], 1.0)
 
-        init_module(policy_module, 'policy')
-        init_module(r_value_module, 'reward value function')
-        init_module(c_value_module, 'constraint value function')
+    distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TruncatedNormal
+    distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
+                                                                        'max': cfg.agent.actor_dist_bound}
+    policy_module = ProbabilisticActor(
+        module=TensorDictModule(
+            module=actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
+        ),
+        spec=env.action_spec,
+        in_keys=["loc", "scale"],
+        distribution_class=distribution_class,
+        distribution_kwargs=distribution_kwargs,
+        return_log_prob=True,  # we'll need the log-prob for the numerator of the importance weights
+        default_interaction_type=ExplorationType.RANDOM,
+    )
+    in_features = env.observation_spec['observation'].shape[0]
+    critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=activation_class,
+                     **cfg.critic.net_spec)
+    safe_critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=activation_class,
+                          # ensure cost critic only outputs positive values by adding final ReLU
+                          activate_last_layer=cfg.critic.constraint_activation,
+                          **cfg.critic.net_spec)
+    if cfg.agent.orthogonal_init:
+        orthogonal_init(critic_net, 0.01)
+        orthogonal_init(safe_critic_net, 0.01)
 
-        r_advantage_module = GAE(value_network=r_value_module, average_gae=True, **cfg.agent.estimator)
-        r_advantage_module.set_keys(advantage='r_advantage', value_target='r_value_target', value='r_state_value')
-        c_advantage_module = GAE(value_network=c_value_module, average_gae=True, **cfg.agent.estimator)
-        c_advantage_module.set_keys(advantage='c_advantage', value_target='c_value_target', value='c_state_value')
+    r_value_module = ValueOperator(
+        module=critic_net,
+        in_keys=["observation"],
+        out_keys=["r_state_value"],
+    )
+    c_value_module = ValueOperator(
+        module=safe_critic_net,
+        in_keys=["observation"],
+        out_keys=["c_state_value"],
+    )
 
-        if cfg.agent.lagrange.type == 'naive':
-            lagrangian = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
-                                       cost_limit=cfg.agent.lagrange.params.cost_limit)
-        elif cfg.agent.lagrange.type == 'pid':
-            lagrangian = PIDLagrange(**cfg.agent.lagrange.params)
-        else:
-            raise ValueError(f'Unknown lagrange type {cfg.agent.lagrange}, either naive or pid')
+    init_module(policy_module, 'policy')
+    init_module(r_value_module, 'reward value function')
+    init_module(c_value_module, 'constraint value function')
 
-        loss_module = PPOLagLoss(
-            actor=policy_module,
-            critic=r_value_module,
-            safe_critic=c_value_module,
-            r_value_estimator=r_advantage_module,
-            c_value_estimator=c_advantage_module,
-            lagrangian=lagrangian,
-            **cfg.agent.loss_module
-        )
+    r_advantage_module = GAE(value_network=r_value_module, average_gae=True, **cfg.agent.estimator)
+    r_advantage_module.set_keys(advantage='r_advantage', value_target='r_value_target', value='r_state_value')
+    c_advantage_module = GAE(value_network=c_value_module, average_gae=True, **cfg.agent.estimator)
+    c_advantage_module.set_keys(advantage='c_advantage', value_target='c_value_target', value='c_state_value')
 
+    if cfg.agent.lagrange.type == 'naive':
+        lagrangian = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
+                                   cost_limit=cfg.agent.lagrange.params.cost_limit)
+    elif cfg.agent.lagrange.type == 'pid':
+        lagrangian = PIDLagrange(**cfg.agent.lagrange.params)
     else:
-        raise ValueError(f'Unrecognized algo {cfg.agent.algo}')
+        raise ValueError(f'Unknown lagrange type {cfg.agent.lagrange}, either naive or pid')
+
+    loss_module = PPOLagLoss(
+        actor=policy_module,
+        critic=r_value_module,
+        safe_critic=c_value_module,
+        r_value_estimator=r_advantage_module,
+        c_value_estimator=c_advantage_module,
+        lagrangian=lagrangian,
+        **cfg.agent.loss_module
+    )
 
     return loss_module, policy_module, (actor_net, critic_net, safe_critic_net)
 
