@@ -17,3 +17,4 @@ critic:
   constraint_activation: False  # if True, use ReLU activation on the output of the safety critic
 
 seed: 0
+tag: null
