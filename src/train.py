@@ -25,7 +25,7 @@ def init_wandb(cfg):
         tags += list(map(lambda i: str(i), OmegaConf.to_object(cfg.environment.instances)))
     wandb_cfg = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     wandb.init(**cfg.wandb.setup, group=cfg.environment.variant, tags=tags, config=wandb_cfg,
-               settings=wandb.Settings(start_method="thread"))
+               settings=wandb.Settings(start_method="thread"), reinit=True)
     # for net in nets:
     #     wandb.watch(net, **cfg.wandb.watch)
     wandb.define_metric("train/avg_score", summary="max", step_metric='train/iteration')
@@ -111,7 +111,7 @@ def main(cfg: DictConfig) -> None:
         {'params': [p for k, p in loss_module.named_parameters() if 'actor' in k],
          'lr': cfg.agent.actor_lr, 'weight_decay': cfg.agent.actor_weight_decay},
         {'params': [p for k, p in loss_module.named_parameters() if 'lag' in k], 'lr': cfg.agent.lag_lr}
-    ], eps=1e-4)
+    ], eps=1e-5)
     if cfg.agent.schedule:  # square-summable, non-summable step sizes
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim,
                                                       lr_lambda=[lambda epoch: 1 / (1 + (0.05*epoch))**0.25,
@@ -125,6 +125,7 @@ def main(cfg: DictConfig) -> None:
 
     collector.shutdown()
     pbar.close()
+    wandb.finish()
 
 
 if __name__ == "__main__":
