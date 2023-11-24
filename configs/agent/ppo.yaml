@@ -17,9 +17,9 @@ lagrange:
     cost_limit: 0
     proj: "relu"
 
-actor_lr: 0.01
-critic_lr: 0.01
-lag_lr: 0.01
+actor_lr: 0.001
+critic_lr: 0.001
+lag_lr: 0.001
 actor_weight_decay: 0.0
 schedule: False
 orthogonal_init: False
@@ -36,7 +36,7 @@ loss_module:
   gamma: 1.0
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
-  lagrangian_delay: 50
+  lagrangian_delay: 20
   target_kl: 0.025
   reward_scale: 0.05
   cost_scale: 0.01
