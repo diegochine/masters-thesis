@@ -105,16 +105,16 @@ def main(cfg: DictConfig) -> None:
     eval_env.reset()
 
     optim = torch.optim.Adam([
+        {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
         {'params': [p for k, p in loss_module.named_parameters() if 'actor' in k],
          'lr': cfg.agent.actor_lr, 'weight_decay': cfg.agent.actor_weight_decay},
-        {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
         {'params': [p for k, p in loss_module.named_parameters() if 'lag' in k], 'lr': cfg.agent.lag_lr}
-    ])
-    if cfg.agent.schedule:
-        scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optim,
-                                                              lr_lambda=[lambda _: cfg.agent.schedule_factor,
-                                                                         lambda _: cfg.agent.schedule_factor,
-                                                                         lambda _: 1.])
+    ], eps=1e-4)
+    if cfg.agent.schedule:  # square-summable, non-summable step sizes
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optim,
+                                                      lr_lambda=[lambda epoch: 1 / (1 + (0.05*epoch))**0.25,
+                                                                 lambda epoch: 1 / (1 + (0.05*epoch))**0.5,
+                                                                 lambda epoch: 1 / (1 + (0.05*epoch))])
     else:
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda _: 1.)
 

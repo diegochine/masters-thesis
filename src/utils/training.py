@@ -376,7 +376,7 @@ def train_loop(cfg: DictConfig,
                     wandb.log({'train_step': train_step, **batch_log})
                     train_step += 1
 
-            scheduler.step()
+        scheduler.step()
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
