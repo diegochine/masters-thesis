@@ -1,7 +1,5 @@
 algo: "ppolag"
 state_dependent_std: False
-std_dev_init: 1.0
-std_dev_trainable: True
 
 lagrange:
   type: pid
@@ -20,12 +18,12 @@ lagrange:
 actor_lr: 0.001
 critic_lr: 0.001
 lag_lr: 0.001
-actor_weight_decay: 0.0
-schedule: False
-orthogonal_init: False
+actor_weight_decay: 0.005
+schedule: True
+orthogonal_init: True
 activation: "tanh"
 
-actor_dist_bound: 10  # float; if <= 0, actions are unbounded,
+actor_dist_bound: 0  # float; if <= 0, actions are unbounded,
                       # if > 0 action range is symmetric [-bound, bound]
 
 loss_module:
