@@ -17,6 +17,8 @@ from src.utils.training import make_env, train_loop, get_agent_modules, seed_eve
 
 def init_wandb(cfg):
     tags = [cfg.agent.algo]
+    if cfg.tag:
+        tags += [cfg.tag]
     if cfg.environment.variant != 'toy':
         tags += ['safety_layer'] if cfg.environment.safety_layer else []
         tags += [cfg.environment.variant]
