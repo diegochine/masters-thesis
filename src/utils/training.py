@@ -263,12 +263,14 @@ def get_agent_modules(env: EnvBase,
     return loss_module, policy_module, (actor_net, critic_net, safe_critic_net)
 
 
-def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict, cost_limit: int):
+def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict, cost_limit: int,
+             log_type='avg'):
     """Evaluate the policy on the evaluation environment.
     :param eval_env: environment to evaluate on.
     :param policy_module: policy to evaluate.
     :param optimal_scores: optimal costs for each instance in the evaluation environment.
     :param cost_limit: cost limit of the agent.
+    :param log_type: either 'avg' or 'all', whether to log all scores or just the average.
     """
     with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
         # execute a rollout with the trained policy
@@ -277,19 +279,35 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
         # normalize scores according to optimal score of each instance
         optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
                                                  for instance in rewards[:, 2]])
-        avg_cost = rewards[:, 1].mean().item()
-        rewards[:, 0] = -optimal_scores_tensor / rewards[:, 0]
-        rewards[:, 1] = torch.maximum(torch.zeros(1), rewards[:, 1] - cost_limit) / (1000 - cost_limit)
-        eval_log = {'eval/avg_score': rewards[:, 0].mean().item(),
-                    'eval/avg_cost': avg_cost,
-                    'eval/avg_violation': rewards[:, 1].mean().item(),
-                    # 'eval/all_scores': wandb.Histogram(np_histogram=np.histogram(rewards[:, 0])),
-                    # 'eval/all_violations': wandb.Histogram(np_histogram=np.histogram(rewards[:, 1]))
-                    }
-        eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 1.2f}, " \
-                   f"avg violation = {eval_log['eval/avg_violation']: 1.2f}"
+        # note the following 3 vars refer to episode (cumulative) values
+        all_costs = rewards[:, 1]
+        all_scores = -optimal_scores_tensor / rewards[:, 0]
+        all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
+        if log_type == 'avg':
+            eval_log = {'eval/avg_score': all_scores.mean().item(),
+                        'eval/avg_cost': all_costs.mean().item(),
+                        'eval/avg_violation': all_violations.mean().item()
+            }
+            eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 1.2f}, " \
+                       f"avg violation = {eval_log['eval/avg_violation']: 1.2f}"
+
+        elif log_type == 'all':
+            all_scores, all_costs = torch.chunk(eval_rollout['next', 'reward'].reshape(-1, 2), chunks=2, dim=1)
+            all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
+            eval_log = {
+                'eval/all_scores': all_scores.squeeze().tolist(),
+                'eval/all_costs': all_costs.squeeze().tolist(),
+                'eval/all_violations': all_violations.squeeze().tolist()
+            }
+            eval_str = ""
+        else:
+            raise ValueError(f'Unknown log type {log_type}, either avg or all')
+
         histories = list(eval_env.history)
-        actions_log = {f'eval/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
+        if log_type == 'avg':
+            actions_log = {f'eval/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
+        else:
+            actions_log = {f'eval/{k}': [v for h in histories for v in h[k]] for k in histories[0].keys()}
         eval_env.reset()  # reset the environment after the eval rollout
         del eval_rollout
     return {**eval_log, **actions_log}, eval_str
@@ -335,6 +353,9 @@ def train_loop(cfg: DictConfig,
     num_batches = cfg.training.frames_per_batch // cfg.training.batch_size
     cost_limit = cfg.agent.lagrange.params.cost_limit
     train_step = 0
+    # keep track of best iterate
+    best_score = 1000
+
     # Iterate over the collector until it reaches frames_per_batch frames
     for it, rollout_td in enumerate(collector):
         # get dones to compute average cumulative reward and constraint cost and violation
@@ -401,9 +422,24 @@ def train_loop(cfg: DictConfig,
         pbar.update(rollout_td.numel())
         train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 1.2f}, " \
                     f"avg violation = {train_log['train/avg_violation']: 1.2f}, " \
-                    f"max steps = {train_log['train/max_steps']: 2d}"
+                    f"avg cost = {train_log['train/avg_cost']: 4.0f}"
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
+
+        if (new_score := abs(avg_cost - cost_limit)) < best_score:  # the closer to 0, the better
+            best_score = new_score
+            best_it = it
+            torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
 
         pbar.set_description(f"{train_str} | {eval_str} ")
         if cfg.wandb.use_wandb:
             wandb.log({**train_log, **eval_log})
+
+    if True: # cfg.wandb.use_wandb:  # final evaluation
+        policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))
+        policy_module.eval()
+        eval_log, _ = evaluate(eval_env, policy_module, optimal_scores, cost_limit, log_type='all')
+        assert all(len(h) == 96 for h in eval_log.values()), "Not all histories have length 96"
+        for timestep in range(96):
+            log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
+            wandb.log({**log, 'timestep': timestep})
+

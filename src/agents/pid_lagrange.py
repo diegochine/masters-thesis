@@ -46,10 +46,10 @@ class PIDLagrange(nn.Module):
         assert proj in ('relu', 'softplus'), f"proj must be either 'relu' or 'softplus', got: {proj}"
         self.proj = nn.ReLU() if proj == 'relu' else nn.Softplus()
 
-    def forward(self, tdict: TensorDictBase, **kwargs) -> float:
+    def forward(self, tdict: TensorDictBase, cost_scale: float, **kwargs) -> float:
         """Updates the PID controller. """
-        Jc = tdict['avg_cost']
-        delta = tdict['avg_violation']
+        Jc = tdict['avg_cost'] * cost_scale
+        delta = tdict['avg_violation'] * cost_scale
         self.pid_i = self.proj(self.pid_i + delta)
 
         self.delta_p = self.alpha_p * self.delta_p + (1 - self.alpha_p) * delta

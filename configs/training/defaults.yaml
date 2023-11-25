@@ -1,4 +1,5 @@
 device: "cpu"
+save_dir: "checkpoints"
 num_envs: 8
 max_grad_norm: 0.5
 frames_per_batch: 3000  # Number of frames collected for each rollout

@@ -9,9 +9,9 @@ lagrange:
     kp: 0.01
     ki: 0.001
     kd: 0.05
-    d_delay: 1
-    alpha_p: 0.0
-    alpha_d: 0.0
+    d_delay: 15
+    alpha_p: 0.95
+    alpha_d: 0.9
     cost_limit: 0
     proj: "relu"
 
@@ -34,7 +34,7 @@ loss_module:
   gamma: 1.0
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
-  lagrangian_delay: 20
+  lagrangian_delay: 50
   target_kl: 0.025
   reward_scale: 0.05
   cost_scale: 0.01

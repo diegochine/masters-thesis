@@ -1,4 +1,4 @@
-import argparse
+import os
 
 import hydra
 import omegaconf
@@ -30,17 +30,21 @@ def init_wandb(cfg):
     #     wandb.watch(net, **cfg.wandb.watch)
     wandb.define_metric("train/avg_score", summary="max", step_metric='train/iteration')
     wandb.define_metric("train/avg_violation", summary="min", step_metric='train/iteration')
-    wandb.define_metric("train/max_steps", summary="max", step_metric='train/iteration')
+    wandb.define_metric("train/avg_cost", summary="last", step_metric='train/iteration')
     wandb.define_metric("eval/avg_score", summary="max", step_metric='train/iteration')
     wandb.define_metric("eval/avg_violation", summary="min", step_metric='train/iteration')
-    wandb.define_metric("eval/all_scores", summary="max", step_metric='train/iteration')
-    wandb.define_metric("eval/all_violations", summary="max", step_metric='train/iteration')
+    wandb.define_metric("eval/avg_cost", summary="last", step_metric='train/iteration')
+    wandb.define_metric("final_eval/all_scores", summary="last", step_metric='timestep')
+    wandb.define_metric("final_eval/all_violations", summary="last", step_metric='timestep')
+    wandb.define_metric("final_eval/all_costs", summary="last", step_metric='timestep')
+
     wandb.define_metric("debug/actor_lr", step_metric='train/iteration')
     wandb.define_metric("debug/critic_lr", step_metric='train/iteration')
     wandb.define_metric("debug/lag_lr", step_metric='train/iteration')
     for a in VPPEnv.ACTIONS:
         wandb.define_metric(f"train/{a}", step_metric='train_episode')
         wandb.define_metric(f"eval/{a}", step_metric='train/iteration')
+        wandb.define_metric(f"final_eval/{a}", step_metric='timestep')
 
     wandb.define_metric("train/loss_lagrangian", step_metric='train_step')
     wandb.define_metric("train/loss_pi", step_metric='train_step')
@@ -62,6 +66,8 @@ def main(cfg: DictConfig) -> None:
     Entry point for training.
     :param cfg: DictConfig; Hydra configuration object.
     """
+    if not os.path.isdir(cfg.training.save_dir):
+        os.makedirs(cfg.training.save_dir)
 
     # Set seed
     seed_everything(cfg.seed)
