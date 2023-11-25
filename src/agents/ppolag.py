@@ -102,10 +102,15 @@ class PPOLagLoss(ClipPPOLoss):
         approx_kl = ((pi_ratio - 1) - pi_logratio).mean()  # kl estimator, see http://joschu.net/blog/kl-approx.html
         td_out.set("approx_kl", approx_kl)
         if approx_kl <= self.target_kl:  # early stopping if kl-divergence is too large
+            clipped_ratio = pi_ratio.clamp(1. - self.clip_epsilon, 1. + self.clip_epsilon)
+            # compute surrogate losses for both reward and cost
             r_gain1 = pi_ratio * r_advantage
-            r_gain2 = pi_logratio.clamp(*self._clip_bounds).exp() * r_advantage
+            r_gain2 = clipped_ratio * r_advantage
             r_gain = torch.stack([r_gain1, r_gain2], -1).min(dim=-1)[0]
-            c_gain = pi_ratio * c_advantage
+            c_gain1 = pi_ratio * c_advantage
+            c_gain2 = clipped_ratio * c_advantage
+            c_gain = torch.stack([c_gain1, c_gain2], -1).max(dim=-1)[0]
+
             loss_pi = (-r_gain + self.lag.get() * c_gain).mean() / (1 + self.lag.get())
             td_out.set("loss_pi", loss_pi)
 
