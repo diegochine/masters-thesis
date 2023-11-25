@@ -23,7 +23,7 @@ from torchrl.objectives.value import GAE
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 from src.envs import StandardVPPEnv, CumulativeVPPEnv, SafeGridWorld
-from src.agents import PPOLagLoss, NaiveLagrange, PIDLagrange
+from src.algos import PPOLagLoss, NaiveLagrange, PIDLagrange, LagrangeBase
 
 ########################################################################################################################
 
@@ -163,7 +163,7 @@ def orthogonal_init(mlp, scale):
 
 def get_agent_modules(env: EnvBase,
                       cfg: DictConfig,
-                      device: torch.device) -> (LossModule, ProbabilisticActor, Tuple[nn.Module]):
+                      device: torch.device) -> (LossModule, LagrangeBase, ProbabilisticActor, Tuple[nn.Module]):
     """Creates and initializes agent modules.
     :param env: environment used for initialization.
     :param cfg: Hydra config.
@@ -243,10 +243,11 @@ def get_agent_modules(env: EnvBase,
     c_advantage_module.set_keys(advantage='c_advantage', value_target='c_value_target', value='c_state_value')
 
     if cfg.agent.lagrange.type == 'naive':
-        lagrangian = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
-                                   cost_limit=cfg.agent.lagrange.params.cost_limit)
+        lag_module = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
+                                   cost_limit=cfg.agent.lagrange.params.cost_limit,
+                                   lr=cfg.agent.lag_lr)
     elif cfg.agent.lagrange.type == 'pid':
-        lagrangian = PIDLagrange(**cfg.agent.lagrange.params)
+        lag_module = PIDLagrange(**cfg.agent.lagrange.params)
     else:
         raise ValueError(f'Unknown lagrange type {cfg.agent.lagrange}, either naive or pid')
 
@@ -256,11 +257,10 @@ def get_agent_modules(env: EnvBase,
         safe_critic=c_value_module,
         r_value_estimator=r_advantage_module,
         c_value_estimator=c_advantage_module,
-        lagrangian=lagrangian,
         **cfg.agent.loss_module
     )
 
-    return loss_module, policy_module, (actor_net, critic_net, safe_critic_net)
+    return loss_module, lag_module, policy_module, (actor_net, critic_net, safe_critic_net)
 
 
 def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict, cost_limit: int,
@@ -287,9 +287,10 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
             eval_log = {'eval/avg_score': all_scores.mean().item(),
                         'eval/avg_cost': all_costs.mean().item(),
                         'eval/avg_violation': all_violations.mean().item()
-            }
-            eval_str = f"EVAL: avg cumreward = {eval_log['eval/avg_score']: 1.2f}, " \
-                       f"avg violation = {eval_log['eval/avg_violation']: 1.2f}"
+                        }
+            eval_str = f"[E] reward: {eval_log['eval/avg_score']: 1.2f}, " \
+                       f"violation: {eval_log['eval/avg_violation']: 1.2f}, " \
+                       f"cost: {eval_log['eval/avg_cost']: 4.0f}"
 
         elif log_type == 'all':
             all_scores, all_costs = torch.chunk(eval_rollout['next', 'reward'].reshape(-1, 2), chunks=2, dim=1)
@@ -331,6 +332,7 @@ def train_loop(cfg: DictConfig,
                device: torch.device,
                eval_env: EnvBase,
                loss_module: LossModule,
+               lag_module: LagrangeBase,
                optim: torch.optim.Optimizer,
                pbar: tqdm.tqdm,
                policy_module: ProbabilisticActor,
@@ -365,8 +367,12 @@ def train_loop(cfg: DictConfig,
         if cfg.agent.lagrange.positive_violation:
             avg_violation = max(0., avg_violation)
         cost_td = TensorDict({'avg_cost': avg_cost, 'avg_violation': avg_violation}, [])
-        loss_module.update_cost_estimate(cost_td)
+
         replay_buffer.extend(rollout_td.reshape(-1).cpu())
+
+        # Optimization: first update lagrangian
+        loss_lagrangian = lag_module(cost_td, cost_scale=cfg.agent.loss_module.cost_scale)
+        loss_module.set_lagrangian(lag_module.get())
 
         # Optimization: compute loss and optimize
         for epoch in range(cfg.training.num_epochs):
@@ -395,10 +401,10 @@ def train_loop(cfg: DictConfig,
                      'train/avg_cost': avg_cost,
                      'train/avg_violation': max(0, avg_violation) / (1000 - cost_limit),
                      'train/max_steps': rollout_td["step_count"].max().item(),
+                     'train/loss_lagrangian': loss_lagrangian,
                      'debug/actor_lr': optim.param_groups[0]["lr"],
-                     'debug/critic_lr': optim.param_groups[1]["lr"]}
-        if cfg.agent.lagrange.type == 'naive':
-            train_log['debug/lag_lr'] = optim.param_groups[2]["lr"]
+                     'debug/critic_lr': optim.param_groups[1]["lr"],
+                     **{f'debug/{k}': v.item() for k, v in lag_module.get_logs().items()}}
         if cfg.environment.variant == 'cvirt_in':
             train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
@@ -420,9 +426,10 @@ def train_loop(cfg: DictConfig,
             train_log['train/loc_out_range'] = (rollout_td['loc'][:, 1].max() - rollout_td['loc'][:, 1].min()).item()
 
         pbar.update(rollout_td.numel())
-        train_str = f"TRAIN: avg cumreward = {train_log['train/avg_score']: 1.2f}, " \
-                    f"avg violation = {train_log['train/avg_violation']: 1.2f}, " \
-                    f"avg cost = {train_log['train/avg_cost']: 4.0f}"
+        train_str = f"[T] reward: {train_log['train/avg_score']: 1.2f}, " \
+                    f"violation: {train_log['train/avg_violation']: 1.2f}, " \
+                    f"cost: {train_log['train/avg_cost']: 4.0f}, " \
+                    f"lag: {lag_module.get(): 3.0f} "
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
 
         if (new_score := abs(avg_cost - cost_limit)) < best_score:  # the closer to 0, the better
@@ -430,11 +437,11 @@ def train_loop(cfg: DictConfig,
             best_it = it
             torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
 
-        pbar.set_description(f"{train_str} | {eval_str} ")
+        pbar.set_description(f"{train_str} | {eval_str} |")
         if cfg.wandb.use_wandb:
             wandb.log({**train_log, **eval_log})
 
-    if True: # cfg.wandb.use_wandb:  # final evaluation
+    if cfg.wandb.use_wandb:  # final evaluation
         policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))
         policy_module.eval()
         eval_log, _ = evaluate(eval_env, policy_module, optimal_scores, cost_limit, log_type='all')
@@ -442,4 +449,3 @@ def train_loop(cfg: DictConfig,
         for timestep in range(96):
             log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
             wandb.log({**log, 'timestep': timestep})
-

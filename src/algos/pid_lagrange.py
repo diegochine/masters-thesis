@@ -2,8 +2,10 @@ import torch
 from tensordict import TensorDictBase, TensorDict
 from torch import nn
 
+from src.algos.lagrange import LagrangeBase
 
-class PIDLagrange(nn.Module):
+
+class PIDLagrange(LagrangeBase):
     """Implementation of PID Lagrangian multiplier. For more info: <https://arxiv.org/abs/2007.03964>`_
     """
 

@@ -51,7 +51,7 @@ def init_wandb(cfg):
     wandb.define_metric("train/loss_entropy", step_metric='train_step')
     wandb.define_metric("train/loss_r_critic", step_metric='train_step')
     wandb.define_metric("train/loss_c_critic", step_metric='train_step')
-    wandb.define_metric("debug/lagrangian", step_metric='train_step')
+    wandb.define_metric("debug/lagrangian", step_metric='train/iteration')
     wandb.define_metric("debug/entropy", step_metric='train_step')
     wandb.define_metric("debug/preds_reward", step_metric='train_step')
     wandb.define_metric("debug/targets_reward", step_metric='train_step')
@@ -78,7 +78,7 @@ def main(cfg: DictConfig) -> None:
 
     # Create env to initialize modules and normalization state dict
     env = make_env(device=device, **cfg.environment)
-    loss_module, policy_module, nets = get_agent_modules(env, cfg, device)
+    loss_module, lag_module, policy_module, nets = get_agent_modules(env, cfg, device)
     t_state_dict = env.transform[0].state_dict()
     del env
 
@@ -116,18 +116,16 @@ def main(cfg: DictConfig) -> None:
         {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
         {'params': [p for k, p in loss_module.named_parameters() if 'actor' in k],
          'lr': cfg.agent.actor_lr, 'weight_decay': cfg.agent.actor_weight_decay},
-        {'params': [p for k, p in loss_module.named_parameters() if 'lag' in k], 'lr': cfg.agent.lag_lr}
     ], eps=1e-5)
     if cfg.agent.schedule:  # square-summable, non-summable step sizes
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim,
                                                       lr_lambda=[lambda epoch: 1 / (1 + (0.05*epoch))**0.25,
-                                                                 lambda epoch: 1 / (1 + (0.05*epoch))**0.5,
-                                                                 lambda epoch: 1 / (1 + (0.05*epoch))])
+                                                                 lambda epoch: 1 / (1 + (0.05*epoch))**0.5])
     else:
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda _: 1.)
 
     pbar = tqdm(total=total_frames, desc="Training", unit=" frames")
-    train_loop(cfg, collector, device, eval_env, loss_module, optim, pbar, policy_module, replay_buffer, scheduler)
+    train_loop(cfg, collector, device, eval_env, loss_module, lag_module, optim, pbar, policy_module, replay_buffer, scheduler)
 
     collector.shutdown()
     pbar.close()

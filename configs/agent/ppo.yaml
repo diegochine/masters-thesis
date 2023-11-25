@@ -6,18 +6,18 @@ lagrange:
   positive_violation: False
   params:
     initial_value: 1.0
-    kp: 0.01
-    ki: 0.001
-    kd: 0.05
-    d_delay: 15
-    alpha_p: 0.95
-    alpha_d: 0.9
+    kp: 0.1
+    ki: 0.01
+    kd: 0.5
+    d_delay: 5
+    alpha_p: 0.2
+    alpha_d: 0.2
     cost_limit: 0
     proj: "relu"
 
 actor_lr: 0.001
 critic_lr: 0.001
-lag_lr: 0.001
+lag_lr: 0.5
 actor_weight_decay: 0.005
 schedule: True
 orthogonal_init: True
@@ -34,7 +34,6 @@ loss_module:
   gamma: 1.0
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
-  lagrangian_delay: 50
   target_kl: 0.025
   reward_scale: 0.05
   cost_scale: 0.01

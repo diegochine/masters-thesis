@@ -1,12 +1,8 @@
-import tensordict
 import torch
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule, ProbabilisticTensorDictSequential
 from torchrl.objectives import distance_loss, ClipPPOLoss
 from torchrl.objectives.value import ValueEstimatorBase
-
-from src.agents.naive_lagrange import NaiveLagrange
-from src.agents.pid_lagrange import PIDLagrange
 
 
 class PPOLagLoss(ClipPPOLoss):
@@ -24,8 +20,6 @@ class PPOLagLoss(ClipPPOLoss):
             safe_critic: TensorDictModule,
             r_value_estimator: ValueEstimatorBase,
             c_value_estimator: ValueEstimatorBase,
-            lagrangian: NaiveLagrange | PIDLagrange,
-            lagrangian_delay: int = 50,
             *,
             target_kl: float = 0.02,
             reward_scale: float = 1.0,
@@ -33,13 +27,10 @@ class PPOLagLoss(ClipPPOLoss):
             **kwargs,
     ):
         super(PPOLagLoss, self).__init__(actor, critic, **kwargs)
-        self.lag = lagrangian
         self.convert_to_functional(safe_critic, 'safe_critic', create_target_params=False)
         self.r_value_estimator = r_value_estimator
         self.c_value_estimator = c_value_estimator
-        self.cost_td = None
-        self.register_buffer('lagrangian_delay', torch.tensor(lagrangian_delay))
-        self.register_buffer('step', torch.tensor(0))
+        self.register_buffer('lagrangian', torch.ones(1))
         self.register_buffer('cost_scale', torch.tensor(cost_scale))
         self.register_buffer('reward_scale', torch.tensor(reward_scale))
         self.register_buffer('target_kl', torch.tensor(target_kl))
@@ -53,20 +44,13 @@ class PPOLagLoss(ClipPPOLoss):
             self._out_keys = keys
         return self._out_keys
 
-    def update_cost_estimate(self, tdict: TensorDictBase):
+    def set_lagrangian(self, lagrangian: float):
         """Updates the costs of the lagrangian multiplier."""
-        self.cost_td = tdict.clone(False)
+        self.lagrangian = lagrangian
 
     def forward(self, tdict: TensorDictBase) -> TensorDictBase:
         tmp_td = tdict.clone(False)
         td_out = TensorDict({}, [])
-
-        if self.step % self.lagrangian_delay == 0:
-            # compute lagrangian loss
-            loss_lagrangian = self.lag(self.cost_td, cost_scale=self.cost_scale)
-            td_out.set("loss_lagrangian", loss_lagrangian)
-            td_out = tensordict.merge_tensordicts(td_out, self.lag.get_logs())
-        self.step = (self.step + 1) % self.lagrangian_delay
 
         # compute advantages for both critics
         r_tmp_td = tdict.clone(False).set(('next', 'reward'), tdict.get(('next', 'reward'))[:, :1] * self.reward_scale)
@@ -111,7 +95,7 @@ class PPOLagLoss(ClipPPOLoss):
             c_gain2 = clipped_ratio * c_advantage
             c_gain = torch.stack([c_gain1, c_gain2], -1).max(dim=-1)[0]
 
-            loss_pi = (-r_gain + self.lag.get() * c_gain).mean() / (1 + self.lag.get())
+            loss_pi = (-r_gain + self.lagrangian * c_gain).mean() / (1 + self.lagrangian)
             td_out.set("loss_pi", loss_pi)
 
         # compute entropy and entropy loss
