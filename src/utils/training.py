@@ -451,6 +451,8 @@ def train_loop(cfg: DictConfig,
         policy_module.eval()
         eval_log, _ = evaluate(eval_env, policy_module, optimal_scores, cost_limit, log_type='all')
         assert all(len(h) == 96 for h in eval_log.values()), "Not all histories have length 96"
+        avg_storage = float(np.mean(eval_log['eval/storage_capacity']))
         for timestep in range(96):
             log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
+            log['final_eval/avg_storage_capacity'] = avg_storage
             wandb.log({**log, 'timestep': timestep})
