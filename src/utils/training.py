@@ -374,6 +374,9 @@ def train_loop(cfg: DictConfig,
         loss_lagrangian = lag_module(cost_td, cost_scale=cfg.agent.loss_module.cost_scale)
         loss_module.set_lagrangian(lag_module.get())
 
+        if cfg.agent.use_beta:
+            loss_module.update_beta(rollout_td, optim, cfg.training.max_grad_norm)
+
         # Optimization: compute loss and optimize
         for epoch in range(cfg.training.num_epochs):
             for b in range(num_batches):
@@ -405,6 +408,8 @@ def train_loop(cfg: DictConfig,
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"],
                      **{f'debug/{k}': v.item() for k, v in lag_module.get_logs().items()}}
+        if cfg.agent.use_beta:
+            train_log['debug/beta'] = loss_module.beta.item()
         if cfg.environment.variant == 'cvirt_in':
             train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))

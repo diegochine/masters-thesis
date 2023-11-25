@@ -22,6 +22,7 @@ actor_weight_decay: 0.005
 schedule: True
 orthogonal_init: True
 activation: "tanh"
+use_beta: False
 
 actor_dist_bound: 0  # float; if <= 0, actions are unbounded,
                       # if > 0 action range is symmetric [-bound, bound]

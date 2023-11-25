@@ -34,6 +34,7 @@ class PPOLagLoss(ClipPPOLoss):
         self.register_buffer('cost_scale', torch.tensor(cost_scale))
         self.register_buffer('reward_scale', torch.tensor(reward_scale))
         self.register_buffer('target_kl', torch.tensor(target_kl))
+        self.register_buffer('beta', torch.ones(1))
 
     @property
     def out_keys(self):
@@ -47,6 +48,63 @@ class PPOLagLoss(ClipPPOLoss):
     def set_lagrangian(self, lagrangian: float):
         """Updates the costs of the lagrangian multiplier."""
         self.lagrangian = lagrangian
+
+    def update_beta(self, tdict: TensorDictBase, optim: torch.optim.Optimizer, grad_clip_norm: float):
+        """Compute adaptive scaling parameter beta as the ratio of un-scaled policy gradients.
+        See PID lagrangian paper for more info (section 7)"""
+        tmp_td = tdict.clone(False)
+
+        # compute advantages for both critics
+        r_tmp_td = tdict.clone(False).set(('next', 'reward'), tdict.get(('next', 'reward'))[:, :1] * self.reward_scale)
+        c_tmp_td = tdict.clone(False).set(('next', 'reward'), tdict.get(('next', 'reward'))[:, 1:] * self.cost_scale)
+
+        with torch.no_grad():
+            self.r_value_estimator(
+                r_tmp_td,
+                params=self._cached_critic_params_detached,
+                target_params=self.target_critic_params,
+            )
+            self.c_value_estimator(
+                c_tmp_td,
+                params=self.safe_critic_params.detach(),
+                target_params=self.target_safe_critic_params,
+            )
+        r_advantage = r_tmp_td.get(self.r_value_estimator.tensor_keys.advantage)
+        c_advantage = c_tmp_td.get(self.c_value_estimator.tensor_keys.advantage)
+
+        if self.normalize_advantage:
+            if r_advantage.numel() > 1:
+                loc = r_advantage.mean().item()
+                scale = r_advantage.std().clamp_min(1e-6).item()
+                r_advantage = (r_advantage - loc) / scale
+            if c_advantage.numel() > 1:
+                loc = c_advantage.mean().item()
+                scale = c_advantage.std().clamp_min(1e-6).item()
+                c_advantage = (c_advantage - loc) / scale
+
+        # compute actor loss
+        pi_logratio, dist = self._log_weight(tmp_td)
+        pi_ratio = pi_logratio.exp()
+        clipped_ratio = pi_ratio.clamp(1. - self.clip_epsilon, 1. + self.clip_epsilon)
+        # compute surrogate losses for both reward and cost
+        r_gain1 = pi_ratio * r_advantage
+        r_gain2 = clipped_ratio * r_advantage
+        r_gain = - torch.stack([r_gain1, r_gain2], -1).min(dim=-1)[0]
+        c_gain1 = pi_ratio * c_advantage
+        c_gain2 = clipped_ratio * c_advantage
+        c_gain = torch.stack([c_gain1, c_gain2], -1).max(dim=-1)[0]
+
+        optim.zero_grad()
+        r_gain.mean().backward(retain_graph=True)
+        r_grad_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip_norm)
+        r_grad_norm = torch.minimum(r_grad_norm, torch.tensor(grad_clip_norm))
+        optim.zero_grad()
+        c_gain.mean().backward()
+        c_grad_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip_norm)
+        c_grad_norm = torch.minimum(c_grad_norm, torch.tensor(grad_clip_norm))
+        optim.zero_grad()
+
+        self.beta = r_grad_norm / c_grad_norm
 
     def forward(self, tdict: TensorDictBase) -> TensorDictBase:
         tmp_td = tdict.clone(False)
@@ -95,7 +153,7 @@ class PPOLagLoss(ClipPPOLoss):
             c_gain2 = clipped_ratio * c_advantage
             c_gain = torch.stack([c_gain1, c_gain2], -1).max(dim=-1)[0]
 
-            loss_pi = (-r_gain + self.lagrangian * c_gain).mean() / (1 + self.lagrangian)
+            loss_pi = (-r_gain + self.lagrangian * self.beta * c_gain).mean() / (1 + self.lagrangian)
             td_out.set("loss_pi", loss_pi)
 
         # compute entropy and entropy loss
