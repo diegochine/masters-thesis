@@ -357,6 +357,7 @@ def train_loop(cfg: DictConfig,
     train_step = 0
     # keep track of best iterate
     best_score = 1000
+    best_it = None
 
     # Iterate over the collector until it reaches frames_per_batch frames
     for it, rollout_td in enumerate(collector):
@@ -444,7 +445,7 @@ def train_loop(cfg: DictConfig,
 
         pbar.set_description(f"{train_str} | {eval_str} |")
         if cfg.wandb.use_wandb:
-            wandb.log({**train_log, **eval_log})
+            wandb.log({**train_log, **eval_log, 'surrogate_score': new_score})
 
     if cfg.wandb.use_wandb:  # final evaluation
         policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))

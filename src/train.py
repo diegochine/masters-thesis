@@ -118,9 +118,7 @@ def main(cfg: DictConfig) -> None:
          'lr': cfg.agent.actor_lr, 'weight_decay': cfg.agent.actor_weight_decay},
     ], eps=1e-5)
     if cfg.agent.schedule:  # square-summable, non-summable step sizes
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optim,
-                                                      lr_lambda=[lambda epoch: 1 / (1 + (0.05*epoch))**0.25,
-                                                                 lambda epoch: 1 / (1 + (0.05*epoch))**0.5])
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=cfg.training.iterations, eta_min=1e-6)
     else:
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda _: 1.)
 
