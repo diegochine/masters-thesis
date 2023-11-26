@@ -15,8 +15,8 @@ lagrange:
     cost_limit: 0
     proj: "relu"
 
-actor_lr: 0.001
-critic_lr: 0.001
+actor_lr: 0.003
+critic_lr: 0.005
 lag_lr: 0.5
 actor_weight_decay: 0.005
 schedule: True
@@ -36,7 +36,7 @@ loss_module:
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
   target_kl: 0.025
-  reward_scale: 0.05
+  reward_scale: 0.01
   cost_scale: 0.01
 
 estimator:
