@@ -313,10 +313,12 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
             eval_log = {**eval_log, **actions_log}
             eval_env.reset()  # reset the environment after the eval rollout
             del eval_rollout
-
-    eval_str = f"[E] reward: {eval_log['eval/deterministic/avg_score']: 1.2f}, " \
+    if log_type == 'avg':
+        eval_str = f"[E] reward: {eval_log['eval/deterministic/avg_score']: 1.2f}, " \
                f"violation: {eval_log['eval/deterministic/avg_violation']: 1.2f}, " \
                f"cost: {eval_log['eval/deterministic/avg_cost']: 4.0f}"
+    else:
+        eval_str = ''
 
     return eval_log, eval_str
 
