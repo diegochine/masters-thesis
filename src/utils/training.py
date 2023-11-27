@@ -272,46 +272,53 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
     :param cost_limit: cost limit of the agent.
     :param log_type: either 'avg' or 'all', whether to log all scores or just the average.
     """
-    with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
-        # execute a rollout with the trained policy
-        eval_rollout = eval_env.rollout(100, policy_module)
-        rewards = get_rollout_scores(eval_rollout)
-        # normalize scores according to optimal score of each instance
-        optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
-                                                 for instance in rewards[:, 2]])
-        # note the following 3 vars refer to episode (cumulative) values
-        all_costs = rewards[:, 1]
-        all_scores = -optimal_scores_tensor / rewards[:, 0]
-        all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
-        if log_type == 'avg':
-            eval_log = {'eval/avg_score': all_scores.mean().item(),
-                        'eval/avg_cost': all_costs.mean().item(),
-                        'eval/avg_violation': all_violations.mean().item()
-                        }
-            eval_str = f"[E] reward: {eval_log['eval/avg_score']: 1.2f}, " \
-                       f"violation: {eval_log['eval/avg_violation']: 1.2f}, " \
-                       f"cost: {eval_log['eval/avg_cost']: 4.0f}"
-
-        elif log_type == 'all':
-            all_scores, all_costs = torch.chunk(eval_rollout['next', 'reward'].reshape(-1, 2), chunks=2, dim=1)
+    eval_log = dict()
+    for explore_type, prefix in ((ExplorationType.MEAN, 'eval/deterministic'),
+                                 (ExplorationType.RANDOM, 'eval/stochastic')):
+        with set_exploration_type(explore_type), torch.no_grad():
+            # execute a rollout with the trained policy
+            eval_rollout = eval_env.rollout(100, policy_module)
+            rewards = get_rollout_scores(eval_rollout)
+            # normalize scores according to optimal score of each instance
+            optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
+                                                     for instance in rewards[:, 2]])
+            # note the following 3 vars refer to episode (cumulative) values
+            all_costs = rewards[:, 1]
+            all_scores = -optimal_scores_tensor / rewards[:, 0]
             all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
-            eval_log = {
-                'eval/all_scores': all_scores.squeeze().tolist(),
-                'eval/all_costs': all_costs.squeeze().tolist(),
-                'eval/all_violations': all_violations.squeeze().tolist()
-            }
-            eval_str = ""
-        else:
-            raise ValueError(f'Unknown log type {log_type}, either avg or all')
+            if log_type == 'avg':
+                eval_log = {f'{prefix}/avg_score': all_scores.mean().item(),
+                            f'{prefix}/avg_cost': all_costs.mean().item(),
+                            f'{prefix}/avg_violation': all_violations.mean().item(),
+                            f'{prefix}/surrogate_score': abs(all_costs.mean().item() - cost_limit),
+                            **eval_log
+                            }
 
-        histories = list(eval_env.history)
-        if log_type == 'avg':
-            actions_log = {f'eval/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
-        else:
-            actions_log = {f'eval/{k}': [v for h in histories for v in h[k]] for k in histories[0].keys()}
-        eval_env.reset()  # reset the environment after the eval rollout
-        del eval_rollout
-    return {**eval_log, **actions_log}, eval_str
+            elif log_type == 'all':
+                all_scores, all_costs = torch.chunk(eval_rollout['next', 'reward'].reshape(-1, 2), chunks=2, dim=1)
+                all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
+                eval_log = {
+                    f'{prefix}/all_scores': all_scores.squeeze().tolist(),
+                    f'{prefix}/all_costs': all_costs.squeeze().tolist(),
+                    f'{prefix}/all_violations': all_violations.squeeze().tolist()
+                }
+            else:
+                raise ValueError(f'Unknown log type {log_type}, either avg or all')
+
+            histories = list(eval_env.history)
+            if log_type == 'avg':
+                actions_log = {f'{prefix}/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
+            else:
+                actions_log = {f'{prefix}/{k}': [v for h in histories for v in h[k]] for k in histories[0].keys()}
+            eval_log = {**eval_log, **actions_log}
+            eval_env.reset()  # reset the environment after the eval rollout
+            del eval_rollout
+
+    eval_str = f"[E] reward: {eval_log['eval/deterministic/avg_score']: 1.2f}, " \
+               f"violation: {eval_log['eval/deterministic/avg_violation']: 1.2f}, " \
+               f"cost: {eval_log['eval/deterministic/avg_cost']: 4.0f}"
+
+    return eval_log, eval_str
 
 
 def get_rollout_scores(rollout_td: TensorDictBase) -> Tensor | Tuple[float, float]:
@@ -404,7 +411,7 @@ def train_loop(cfg: DictConfig,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
                      'train/avg_cost': avg_cost,
                      'train/avg_violation': max(0, avg_violation) / (1000 - cost_limit),
-                     'train/max_steps': rollout_td["step_count"].max().item(),
+                     'train/surrogate_score': abs(avg_cost - cost_limit),
                      'train/loss_lagrangian': loss_lagrangian,
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"],
@@ -438,14 +445,14 @@ def train_loop(cfg: DictConfig,
                     f"lag: {lag_module.get(): 3.0f} "
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
 
-        if (new_score := abs(avg_cost - cost_limit)) < best_score:  # the closer to 0, the better
-            best_score = new_score
+        if train_log['train/surrogate_score'] < best_score:  # the closer to 0, the better
+            best_score = train_log['train/surrogate_score']
             best_it = it
             torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
 
         pbar.set_description(f"{train_str} | {eval_str} |")
         if cfg.wandb.use_wandb:
-            wandb.log({**train_log, **eval_log, 'surrogate_score': new_score})
+            wandb.log({**train_log, **eval_log})
 
     if cfg.wandb.use_wandb:  # final evaluation
         policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))
