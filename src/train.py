@@ -34,9 +34,15 @@ def init_wandb(cfg):
     wandb.define_metric("eval/avg_score", summary="max", step_metric='train/iteration')
     wandb.define_metric("eval/avg_violation", summary="min", step_metric='train/iteration')
     wandb.define_metric("eval/avg_cost", summary="last", step_metric='train/iteration')
-    wandb.define_metric("final_eval/all_scores", summary="last", step_metric='timestep')
-    wandb.define_metric("final_eval/all_violations", summary="last", step_metric='timestep')
-    wandb.define_metric("final_eval/all_costs", summary="last", step_metric='timestep')
+
+    wandb.define_metric("final_eval/deterministic/all_scores", summary="last", step_metric='timestep_deterministic')
+    wandb.define_metric("final_eval/deterministic/all_violations", summary="last", step_metric='timestep_deterministic')
+    wandb.define_metric("final_eval/deterministic/all_costs", summary="last", step_metric='timestep_deterministic')
+    wandb.define_metric("final_eval/deterministic/avg_storage_capacity", summary="last", step_metric='timestep_deterministic')
+    wandb.define_metric("final_eval/stochastic/all_scores", summary="last", step_metric='timestep_stochastic')
+    wandb.define_metric("final_eval/stochastic/all_violations", summary="last", step_metric='timestep_stochastic')
+    wandb.define_metric("final_eval/stochastic/all_costs", summary="last", step_metric='timestep_stochastic')
+    wandb.define_metric("final_eval/stochastic/avg_storage_capacity", summary="last", step_metric='timestep_stochastic')
 
     wandb.define_metric("debug/actor_lr", step_metric='train/iteration')
     wandb.define_metric("debug/critic_lr", step_metric='train/iteration')
@@ -44,7 +50,8 @@ def init_wandb(cfg):
     for a in VPPEnv.ACTIONS:
         wandb.define_metric(f"train/{a}", step_metric='train_episode')
         wandb.define_metric(f"eval/{a}", step_metric='train/iteration')
-        wandb.define_metric(f"final_eval/{a}", step_metric='timestep')
+        wandb.define_metric(f"final_eval/deterministic/{a}", step_metric='timestep_deterministic')
+        wandb.define_metric(f"final_eval/stochastic/{a}", step_metric='timestep_stochastic')
 
     wandb.define_metric("train/loss_lagrangian", step_metric='train_step')
     wandb.define_metric("train/loss_pi", step_metric='train_step')

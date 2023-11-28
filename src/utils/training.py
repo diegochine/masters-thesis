@@ -469,4 +469,4 @@ def train_loop(cfg: DictConfig,
             for timestep in range(96):
                 log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
                 log[f'final_eval/{eval_type}/avg_storage_capacity'] = avg_storage
-                wandb.log({**log, 'timestep': timestep})
+                wandb.log({**log, f'timestep_{eval_type}': timestep})
