@@ -296,11 +296,9 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
                 }
             elif log_type == 'all':
                 all_scores, all_costs = torch.chunk(eval_rollout['next', 'reward'].reshape(-1, 2), chunks=2, dim=1)
-                all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
                 eval_log = {
                     f'{prefix}/all_scores': all_scores.squeeze().tolist(),
                     f'{prefix}/all_costs': all_costs.squeeze().tolist(),
-                    f'{prefix}/all_violations': all_violations.squeeze().tolist(),
                     **eval_log
                 }
             else:
@@ -470,3 +468,8 @@ def train_loop(cfg: DictConfig,
                 log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
                 log[f'final_eval/{eval_type}/avg_storage_capacity'] = avg_storage
                 wandb.log({**log, f'timestep_{eval_type}': timestep})
+            avg_free_storage = 1000 - avg_storage
+            surrogate_score = abs(avg_free_storage - cost_limit)
+            violation = max(0, avg_free_storage - cost_limit) / (1000 - cost_limit)
+            wandb.log({f'final_eval/{eval_type}/surrogate_score': surrogate_score,
+                       f'final_eval/{eval_type}/violation': violation})
