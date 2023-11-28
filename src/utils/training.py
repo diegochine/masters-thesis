@@ -287,36 +287,39 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
             all_scores = -optimal_scores_tensor / rewards[:, 0]
             all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
             if log_type == 'avg':
-                eval_log = {f'{prefix}/avg_score': all_scores.mean().item(),
-                            f'{prefix}/avg_cost': all_costs.mean().item(),
-                            f'{prefix}/avg_violation': all_violations.mean().item(),
-                            f'{prefix}/surrogate_score': abs(all_costs.mean().item() - cost_limit),
-                            **eval_log
-                            }
-
+                eval_log = {
+                    f'{prefix}/avg_score': all_scores.mean().item(),
+                    f'{prefix}/avg_cost': all_costs.mean().item(),
+                    f'{prefix}/avg_violation': all_violations.mean().item(),
+                    f'{prefix}/surrogate_score': abs(all_costs.mean().item() - cost_limit),
+                    **eval_log
+                }
             elif log_type == 'all':
                 all_scores, all_costs = torch.chunk(eval_rollout['next', 'reward'].reshape(-1, 2), chunks=2, dim=1)
                 all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
                 eval_log = {
                     f'{prefix}/all_scores': all_scores.squeeze().tolist(),
                     f'{prefix}/all_costs': all_costs.squeeze().tolist(),
-                    f'{prefix}/all_violations': all_violations.squeeze().tolist()
+                    f'{prefix}/all_violations': all_violations.squeeze().tolist(),
+                    **eval_log
                 }
             else:
                 raise ValueError(f'Unknown log type {log_type}, either avg or all')
 
             histories = list(eval_env.history)
-            if log_type == 'avg':
-                actions_log = {f'{prefix}/{k}': np.array([[v] for h in histories for v in h[k]]) for k in histories[0].keys()}
-            else:
+            if log_type == 'avg':  # logging action distribution across many episodes/envs, loses temporal info
+                actions_log = {f'{prefix}/{k}': np.array([[v] for h in histories for v in h[k]]) for k in
+                               histories[0].keys()}
+            else:  # final evaluation, retain temporal info
                 actions_log = {f'{prefix}/{k}': [v for h in histories for v in h[k]] for k in histories[0].keys()}
+
             eval_log = {**eval_log, **actions_log}
             eval_env.reset()  # reset the environment after the eval rollout
             del eval_rollout
     if log_type == 'avg':
         eval_str = f"[E] reward: {eval_log['eval/deterministic/avg_score']: 1.2f}, " \
-               f"violation: {eval_log['eval/deterministic/avg_violation']: 1.2f}, " \
-               f"cost: {eval_log['eval/deterministic/avg_cost']: 4.0f}"
+                   f"violation: {eval_log['eval/deterministic/avg_violation']: 1.2f}, " \
+                   f"cost: {eval_log['eval/deterministic/avg_cost']: 4.0f}"
     else:
         eval_str = ''
 
@@ -461,8 +464,9 @@ def train_loop(cfg: DictConfig,
         policy_module.eval()
         eval_log, _ = evaluate(eval_env, policy_module, optimal_scores, cost_limit, log_type='all')
         assert all(len(h) == 96 for h in eval_log.values()), "Not all histories have length 96"
-        avg_storage = float(np.mean(eval_log['eval/storage_capacity']))
-        for timestep in range(96):
-            log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
-            log['final_eval/avg_storage_capacity'] = avg_storage
-            wandb.log({**log, 'timestep': timestep})
+        for eval_type in ('deterministic', 'stochastic'):
+            avg_storage = float(np.mean(eval_log[f'eval/{eval_type}/storage_capacity']))
+            for timestep in range(96):
+                log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
+                log[f'final_eval/{eval_type}/avg_storage_capacity'] = avg_storage
+                wandb.log({**log, 'timestep': timestep})
