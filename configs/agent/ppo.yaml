@@ -6,9 +6,9 @@ lagrange:
   positive_violation: False
   params:
     initial_value: 1.0
-    kp: 0.1
-    ki: 0.01
-    kd: 0.5
+    kp: 1.0
+    ki: 1.0
+    kd: 2.0
     d_delay: 5
     alpha_p: 0.2
     alpha_d: 0.2
