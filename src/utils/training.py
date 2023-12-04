@@ -113,7 +113,8 @@ def make_env(device: torch.device,
                                       bound_storage_in=False,
                                       wandb_run=wandb_run,
                                       variant=variant,
-                                      storage_io_bound=storage_io_bound)
+                                      storage_io_bound=storage_io_bound,
+                                      **kwargs)
         else:
             base_env = CumulativeVPPEnv(predictions=train_predictions,
                                         shift=shift,
@@ -125,7 +126,8 @@ def make_env(device: torch.device,
                                         wandb_run=wandb_run,
                                         variant=variant,
                                         cost_fn_type=cost_fn_type,
-                                        storage_io_bound=storage_io_bound)
+                                        storage_io_bound=storage_io_bound,
+                                        **kwargs)
     else:
         raise ValueError(f'Variant name must be in {VARIANTS}')
 
