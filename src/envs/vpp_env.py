@@ -42,7 +42,8 @@ class VPPEnv(Env):
                  savepath: str = None,
                  use_safety_layer: bool = False,
                  in_cap: int = 0,
-                 wandb_run: wandb.sdk.wandb_run.Run | None = None):
+                 wandb_run: wandb.sdk.wandb_run.Run | None = None,
+                 fixed_noise: bool = False):
         """
         :param predictions: pandas.Dataframe; predicted PV and Load.
         :param c_grid: numpy.array; c_grid values.
@@ -51,6 +52,10 @@ class VPPEnv(Env):
         :param noise_std_dev: float; the standard deviation of the additive gaussian noise for the realizations.
         :param savepath: string; if not None, the gurobi models are saved to this directory.
         :param use_safety_layer: bool; if True, use safety layer during training.
+        :param in_cap: int; the capacity of the storage at the beginning of the episode.
+        :param wandb_run: wandb.sdk.wandb_run.Run; wandb run object for logging.
+        :param fixed_noise: bool; if True, the noise is sampled only once, otherwise it is sampled at each reset.
+                Used for evaluation env.
         """
 
         # Counter of safety layer usage
@@ -76,6 +81,12 @@ class VPPEnv(Env):
 
         # We randomly choose an instance
         self.mr = np.random.choice(self.predictions.index)
+
+        if fixed_noise:
+            self.noise = (np.random.normal(0, self.noise_std_dev, self.N),
+                          np.random.normal(0, self.noise_std_dev, self.N))
+        else:
+            self.noise = None
 
         self.savepath = savepath
         self.use_safety_layer = use_safety_layer
@@ -170,13 +181,17 @@ class VPPEnv(Env):
         self.tot_cons_pred = self.predictions['Load(kW)'][self.mr]
         self.tot_cons_pred = np.asarray(self.tot_cons_pred)
 
+        if self.noise is None:
+            noise_pv = np.random.normal(0, self.noise_std_dev, self.N)
+            noise_load = np.random.normal(0, self.noise_std_dev, self.N)
+        else:
+            noise_pv, noise_load = self.noise
+
         # The real PV for the current instance is computed adding noise to the predictions
-        noise = np.random.normal(0, self.noise_std_dev, self.N)
-        self.p_ren_pv_real = self.p_ren_pv_pred + self.p_ren_pv_pred * noise
+        self.p_ren_pv_real = self.p_ren_pv_pred + self.p_ren_pv_pred * noise_pv
 
         # The real Load for the current instance is computed adding noise to the predictions
-        noise = np.random.normal(0, self.noise_std_dev, self.N)
-        self.tot_cons_real = self.tot_cons_pred + self.tot_cons_pred * noise
+        self.tot_cons_real = self.tot_cons_pred + self.tot_cons_pred * noise_load
 
         # Reset the timestep
         self.timestep = 0

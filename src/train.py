@@ -115,7 +115,7 @@ def main(cfg: DictConfig) -> None:
     eval_env = SerialEnv(num_workers=len(cfg.environment.instances),
                          create_env_fn=make_env,
                          create_env_kwargs=[
-                             {'device': device, 't_state_dict': t_state_dict, **cfg.environment,
+                             {'device': device, 't_state_dict': t_state_dict, 'fixed_noise': True, **cfg.environment,
                               'instances': [instance]} for instance in cfg.environment.instances])
     eval_env.reset()
 
