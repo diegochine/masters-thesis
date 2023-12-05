@@ -7,11 +7,11 @@ lagrange:
   params:
     initial_value: 1.0
     kp: 1.0
-    ki: 1.0
+    ki: 0.1
     kd: 2.0
     d_delay: 5
-    alpha_p: 0.2
-    alpha_d: 0.2
+    alpha_p: 0.5
+    alpha_d: 0.5
     cost_limit: 0
     proj: "relu"
 
@@ -22,7 +22,7 @@ actor_weight_decay: 0.005
 schedule: True
 orthogonal_init: True
 activation: "tanh"
-use_beta: False
+use_beta: True
 
 actor_dist_bound: 0  # float; if <= 0, actions are unbounded,
                       # if > 0 action range is symmetric [-bound, bound]

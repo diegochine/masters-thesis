@@ -43,7 +43,7 @@ class PIDLagrange(LagrangeBase):
         self.register_buffer('prev_costs', torch.zeros((d_delay,)))
         self.register_buffer('delta_p', torch.tensor(0.0))
         self.register_buffer('cost_d', torch.tensor(0.0))
-        self.register_buffer('lag', torch.tensor(0.0))
+        self.register_buffer('lag', torch.tensor(initial_value))
 
         assert proj in ('relu', 'softplus'), f"proj must be either 'relu' or 'softplus', got: {proj}"
         self.proj = nn.ReLU() if proj == 'relu' else nn.Softplus()

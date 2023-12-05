@@ -377,11 +377,16 @@ def train_loop(cfg: DictConfig,
         rewards = get_rollout_scores(rollout_td)
         avg_cost = rewards[:, 1].mean().item()
         avg_violation = (rewards[:, 1] - cost_limit).mean().item()
+        surrogate_score = abs(avg_cost - cost_limit)
         if cfg.agent.lagrange.positive_violation:
             avg_violation = max(0., avg_violation)
         cost_td = TensorDict({'avg_cost': avg_cost, 'avg_violation': avg_violation}, [])
-
         replay_buffer.extend(rollout_td.reshape(-1).cpu())
+
+        if surrogate_score < best_score:  # the closer to 0, the better
+            best_score = surrogate_score
+            best_it = it
+            torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
 
         # Optimization: first update lagrangian
         loss_lagrangian = lag_module(cost_td, cost_scale=cfg.agent.loss_module.cost_scale)
@@ -416,7 +421,7 @@ def train_loop(cfg: DictConfig,
                      'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
                      'train/avg_cost': avg_cost,
                      'train/avg_violation': max(0, avg_violation) / (1000 - cost_limit),
-                     'train/surrogate_score': abs(avg_cost - cost_limit),
+                     'train/surrogate_score': surrogate_score,
                      'train/loss_lagrangian': loss_lagrangian,
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"],
@@ -449,11 +454,6 @@ def train_loop(cfg: DictConfig,
                     f"cost: {train_log['train/avg_cost']: 4.0f}, " \
                     f"lag: {lag_module.get(): 3.0f} "
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
-
-        if train_log['train/surrogate_score'] < best_score:  # the closer to 0, the better
-            best_score = train_log['train/surrogate_score']
-            best_it = it
-            torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
 
         pbar.set_description(f"{train_str} | {eval_str} |")
         if cfg.wandb.use_wandb:
