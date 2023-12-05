@@ -24,6 +24,7 @@ class PPOLagLoss(ClipPPOLoss):
             target_kl: float = 0.02,
             reward_scale: float = 1.0,
             cost_scale: float = 1.0,
+            beta_ema: float = 0.9,
             **kwargs,
     ):
         super(PPOLagLoss, self).__init__(actor, critic, **kwargs)
@@ -35,6 +36,7 @@ class PPOLagLoss(ClipPPOLoss):
         self.register_buffer('reward_scale', torch.tensor(reward_scale))
         self.register_buffer('target_kl', torch.tensor(target_kl))
         self.register_buffer('beta', torch.ones(1))
+        self.register_buffer('beta_ema', torch.tensor(beta_ema))
 
     @property
     def out_keys(self):
@@ -104,7 +106,7 @@ class PPOLagLoss(ClipPPOLoss):
         c_grad_norm = torch.minimum(c_grad_norm, torch.tensor(grad_clip_norm))
         optim.zero_grad()
 
-        self.beta = r_grad_norm / c_grad_norm
+        self.beta = self.beta_ema * self.beta + ((1 - self.beta_ema) * r_grad_norm / c_grad_norm)
 
     def forward(self, tdict: TensorDictBase) -> TensorDictBase:
         tmp_td = tdict.clone(False)
