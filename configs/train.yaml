@@ -12,7 +12,7 @@ actor:
 
 critic:
   net_spec:
-    num_cells: 32
+    num_cells: 8
     depth: 2
   constraint_activation: False  # if True, use ReLU activation on the output of the safety critic
 
