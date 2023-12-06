@@ -266,7 +266,7 @@ def get_agent_modules(env: EnvBase,
 
 
 def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict, cost_limit: int,
-             log_type='avg'):
+             log_type='avg', stoch_rollouts=25):
     """Evaluate the policy on the evaluation environment.
     :param eval_env: environment to evaluate on.
     :param policy_module: policy to evaluate.
@@ -278,8 +278,11 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
     for explore_type, prefix in ((ExplorationType.MEAN, 'eval/deterministic'),
                                  (ExplorationType.RANDOM, 'eval/stochastic')):
         with set_exploration_type(explore_type), torch.no_grad():
-            # execute a rollout with the trained policy
-            eval_rollout = eval_env.rollout(100, policy_module)
+            # execute a rollout (or n rollouts for stochastic) with the trained policy
+            if 'stoch' in prefix:
+                eval_rollout = torch.cat([eval_env.rollout(100, policy_module) for _ in range(stoch_rollouts)])
+            else:
+                eval_rollout = eval_env.rollout(100, policy_module)
             rewards = get_rollout_scores(eval_rollout)
             # normalize scores according to optimal score of each instance
             optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
@@ -288,23 +291,13 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
             all_costs = rewards[:, 1]
             all_scores = -optimal_scores_tensor / rewards[:, 0]
             all_violations = torch.maximum(torch.zeros_like(all_costs), all_costs - cost_limit) / (1000 - cost_limit)
-            if log_type == 'avg':
-                eval_log = {
-                    f'{prefix}/avg_score': all_scores.mean().item(),
-                    f'{prefix}/avg_cost': all_costs.mean().item(),
-                    f'{prefix}/avg_violation': all_violations.mean().item(),
-                    f'{prefix}/surrogate_score': abs(all_costs.mean().item() - cost_limit),
-                    **eval_log
-                }
-            elif log_type == 'all':
-                all_scores, all_costs = torch.chunk(eval_rollout['next', 'reward'].reshape(-1, 2), chunks=2, dim=1)
-                eval_log = {
-                    f'{prefix}/all_scores': all_scores.squeeze().tolist(),
-                    f'{prefix}/all_costs': all_costs.squeeze().tolist(),
-                    **eval_log
-                }
-            else:
-                raise ValueError(f'Unknown log type {log_type}, either avg or all')
+            eval_log = {
+                f'{prefix}/avg_score': all_scores.mean().item(),
+                f'{prefix}/avg_cost': all_costs.mean().item(),
+                f'{prefix}/avg_violation': all_violations.mean().item(),
+                f'{prefix}/surrogate_score': abs(all_costs.mean().item() - cost_limit),
+                **eval_log
+            }
 
             histories = list(eval_env.history)
             if log_type == 'avg':  # logging action distribution across many episodes/envs, loses temporal info
@@ -337,6 +330,20 @@ def get_rollout_scores(rollout_td: TensorDictBase) -> Tensor | Tuple[float, floa
     rewards = torch.cat([cumrewards, instances], dim=1)[dones.squeeze()]
     assert dones.sum().item() > 0, "No done found in rollout_td, increase frames_per_batch or decrease num_envs"
     return rewards
+
+
+def final_evaluation(cost_limit, eval_env, optimal_scores, policy_module, prefix):
+    eval_log, _ = evaluate(eval_env, policy_module, optimal_scores, cost_limit, log_type='all')
+    assert all(isinstance(h, float) or len(h) == 96 for h in eval_log.values()), "Not all histories have length 96"
+    for eval_type in ('deterministic', 'stochastic'):
+        avg_storage = float(np.mean(eval_log[f'eval/{eval_type}/storage_capacity']))
+        for timestep in range(96):
+            log = {f'{prefix}/{k[5:]}': v[timestep]
+                   for k, v in eval_log.items() if isinstance(v, list) and eval_type in k}
+            log[f'{prefix}/{eval_type}/avg_storage_capacity'] = avg_storage
+            wandb.log({**log, f'timestep_{eval_type}': timestep})
+
+        wandb.log({f'{prefix}/{k[5:]}': v for k, v in eval_log.items() if isinstance(v, float) and eval_type in k})
 
 
 def train_loop(cfg: DictConfig,
@@ -382,11 +389,6 @@ def train_loop(cfg: DictConfig,
             avg_violation = max(0., avg_violation)
         cost_td = TensorDict({'avg_cost': avg_cost, 'avg_violation': avg_violation}, [])
         replay_buffer.extend(rollout_td.reshape(-1).cpu())
-
-        if surrogate_score < best_score:  # the closer to 0, the better
-            best_score = surrogate_score
-            best_it = it
-            torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
 
         # Optimization: first update lagrangian
         loss_lagrangian = lag_module(cost_td, cost_scale=cfg.agent.loss_module.cost_scale)
@@ -455,23 +457,16 @@ def train_loop(cfg: DictConfig,
                     f"lag: {lag_module.get(): 3.0f} "
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
 
+        if eval_log['eval/stochastic/surrogate_score'] < best_score:  # the closer to 0, the better
+            best_score = surrogate_score
+            best_it = it
+            torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
+
         pbar.set_description(f"{train_str} | {eval_str} |")
         if cfg.wandb.use_wandb:
             wandb.log({**train_log, **eval_log})
 
     if cfg.wandb.use_wandb:  # final evaluation
+        final_evaluation(cost_limit, eval_env, optimal_scores, policy_module, 'final_eval')
         policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))
-        policy_module.eval()
-        eval_log, _ = evaluate(eval_env, policy_module, optimal_scores, cost_limit, log_type='all')
-        assert all(len(h) == 96 for h in eval_log.values()), "Not all histories have length 96"
-        for eval_type in ('deterministic', 'stochastic'):
-            avg_storage = float(np.mean(eval_log[f'eval/{eval_type}/storage_capacity']))
-            for timestep in range(96):
-                log = {f'final_{k}': v[timestep] for k, v in eval_log.items()}
-                log[f'final_eval/{eval_type}/avg_storage_capacity'] = avg_storage
-                wandb.log({**log, f'timestep_{eval_type}': timestep})
-            avg_free_storage = 1000 - avg_storage
-            surrogate_score = abs(avg_free_storage - cost_limit)
-            violation = max(0, avg_free_storage - cost_limit) / (1000 - cost_limit)
-            wandb.log({f'final_eval/{eval_type}/surrogate_score': surrogate_score,
-                       f'final_eval/{eval_type}/violation': violation})
+        final_evaluation(cost_limit, eval_env, optimal_scores, policy_module, 'best_eval')
