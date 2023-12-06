@@ -184,11 +184,9 @@ class VPPEnv(Env):
 
         if self.noise is None:
             if self._np_random is not None:
-                print('using rng')
                 noise_pv = self._np_random.normal(0, self.noise_std_dev, self.N)
                 noise_load = self._np_random.normal(0, self.noise_std_dev, self.N)
             else:
-                print('using np')
                 noise_pv = np.random.normal(0, self.noise_std_dev, self.N)
                 noise_load = np.random.normal(0, self.noise_std_dev, self.N)
         else:
