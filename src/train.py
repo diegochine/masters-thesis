@@ -106,6 +106,7 @@ def main(cfg: DictConfig) -> None:
         split_trajs=False,
         device=device,
     )
+    collector.set_seed(cfg.seed)
     replay_buffer = TensorDictReplayBuffer(
         batch_size=cfg.training.batch_size,
         storage=LazyMemmapStorage(cfg.training.frames_per_batch),
