@@ -83,8 +83,9 @@ class VPPEnv(Env):
         self.mr = np.random.choice(self.predictions.index)
 
         if fixed_noise:
-            self.noise = (np.random.normal(0, self.noise_std_dev, self.N),
-                          np.random.normal(0, self.noise_std_dev, self.N))
+            rng = np.random.default_rng(42)
+            self.noise = (rng.normal(0, self.noise_std_dev, self.N),
+                          rng.normal(0, self.noise_std_dev, self.N))
         else:
             self.noise = None
 
@@ -182,8 +183,14 @@ class VPPEnv(Env):
         self.tot_cons_pred = np.asarray(self.tot_cons_pred)
 
         if self.noise is None:
-            noise_pv = np.random.normal(0, self.noise_std_dev, self.N)
-            noise_load = np.random.normal(0, self.noise_std_dev, self.N)
+            if self._np_random is not None:
+                print('using rng')
+                noise_pv = self._np_random.normal(0, self.noise_std_dev, self.N)
+                noise_load = self._np_random.normal(0, self.noise_std_dev, self.N)
+            else:
+                print('using np')
+                noise_pv = np.random.normal(0, self.noise_std_dev, self.N)
+                noise_load = np.random.normal(0, self.noise_std_dev, self.N)
         else:
             noise_pv, noise_load = self.noise
 
@@ -233,6 +240,8 @@ class VPPEnv(Env):
         When we reset the environment we randomly choose another instance and we clear all the instance variables.
         :return: tuple(numpy.array, dict); array is pv and load values for the current instance, dict is info
         """
+
+        super().reset(seed=seed)
 
         self._clear()
 
