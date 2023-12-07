@@ -17,8 +17,8 @@ from torchrl.data import TensorDictReplayBuffer, UnboundedDiscreteTensorSpec
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
     default_info_dict_reader, EnvBase
 from torchrl.envs.libs.gym import GymWrapper
-from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TanhNormal, TruncatedNormal
-from torchrl.objectives import LossModule
+from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TruncatedNormal
+from torchrl.objectives import LossModule, ClipPPOLoss, ValueEstimators
 from torchrl.objectives.value import GAE
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
@@ -31,7 +31,7 @@ TIMESTEP_IN_A_DAY = 96
 
 VARIANTS = ['toy', 'standard', 'cumulative']
 CONTROLLERS = ['rl', 'unify']
-RL_ALGOS = ['ppolag']
+RL_ALGOS = ['ppo', 'ppolag']
 
 wandb_running = lambda: wandb.run is not None
 
@@ -175,12 +175,15 @@ def get_agent_modules(env: EnvBase,
     def init_module(module, name):
         print(f"Running {name}:", module(env.reset()))
 
-    assert cfg.agent.algo == 'ppolag', "only ppolag supported"
+    in_features = env.observation_spec['observation'].shape[0]
     activation_class = nn.ReLU if cfg.agent.activation == 'relu' else nn.Tanh
+    distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TruncatedNormal
+    distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
+                                                                        'max': cfg.agent.actor_dist_bound}
 
     if cfg.agent.state_dependent_std:  # scale outputted by net
         actor_net = nn.Sequential(
-            MLP(in_features=env.observation_spec['observation'].shape[0],
+            MLP(in_features=in_features,
                 out_features=2 * env.action_spec.shape[-1],
                 device=device,
                 activation_class=activation_class,
@@ -189,19 +192,18 @@ def get_agent_modules(env: EnvBase,
         )
     else:  # scale independent of state
         actor_net = nn.Sequential(
-            MLP(in_features=env.observation_spec['observation'].shape[0],
+            MLP(in_features=in_features,
                 out_features=env.action_spec.shape[-1],
                 device=device,
                 activation_class=activation_class,
                 **cfg.actor.net_spec),
             AddStateIndependentNormalScale(env.action_spec.shape[-1])
         )
+
     if cfg.agent.orthogonal_init:
         orthogonal_init(actor_net[0], 1.0)
+        torch.nn.init.orthogonal_(actor_net[0][-1].weight, 0.01)
 
-    distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TruncatedNormal
-    distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
-                                                                        'max': cfg.agent.actor_dist_bound}
     policy_module = ProbabilisticActor(
         module=TensorDictModule(
             module=actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
@@ -213,56 +215,62 @@ def get_agent_modules(env: EnvBase,
         return_log_prob=True,  # we'll need the log-prob for the numerator of the importance weights
         default_interaction_type=ExplorationType.RANDOM,
     )
-    in_features = env.observation_spec['observation'].shape[0]
+    init_module(policy_module, 'policy')
+
     critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=activation_class,
                      **cfg.critic.net_spec)
-    safe_critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=activation_class,
-                          # ensure cost critic only outputs positive values by adding final ReLU
-                          activate_last_layer=cfg.critic.constraint_activation,
-                          **cfg.critic.net_spec)
     if cfg.agent.orthogonal_init:
         orthogonal_init(critic_net, 0.01)
-        orthogonal_init(safe_critic_net, 0.01)
 
-    r_value_module = ValueOperator(
-        module=critic_net,
-        in_keys=["observation"],
-        out_keys=["r_state_value"],
-    )
-    c_value_module = ValueOperator(
-        module=safe_critic_net,
-        in_keys=["observation"],
-        out_keys=["c_state_value"],
-    )
+    if cfg.agent.algo == 'ppo':
+        r_value_module = ValueOperator(module=critic_net, in_keys=["observation"], out_keys=["state_value"])
+        init_module(r_value_module, 'reward value function')
+        lag_module = None
+        loss_module = ClipPPOLoss(actor=policy_module, critic=r_value_module, **cfg.agent.loss_module)
+        loss_module.make_value_estimator(ValueEstimators.GAE, **cfg.agent.estimator)
+        nets = (actor_net, critic_net)
 
-    init_module(policy_module, 'policy')
-    init_module(r_value_module, 'reward value function')
-    init_module(c_value_module, 'constraint value function')
+    elif cfg.agent.algo == 'ppolag':
+        safe_critic_net = MLP(in_features=in_features, out_features=1, device=device, activation_class=activation_class,
+                              # ensure cost critic only outputs positive values by adding final ReLU
+                              activate_last_layer=cfg.critic.constraint_activation,
+                              **cfg.critic.net_spec)
+        if cfg.agent.orthogonal_init:
+            orthogonal_init(safe_critic_net, 0.01)
 
-    r_advantage_module = GAE(value_network=r_value_module, average_gae=True, **cfg.agent.estimator)
-    r_advantage_module.set_keys(advantage='r_advantage', value_target='r_value_target', value='r_state_value')
-    c_advantage_module = GAE(value_network=c_value_module, average_gae=True, **cfg.agent.estimator)
-    c_advantage_module.set_keys(advantage='c_advantage', value_target='c_value_target', value='c_state_value')
+        r_value_module = ValueOperator(module=critic_net, in_keys=["observation"], out_keys=["r_state_value"])
+        c_value_module = ValueOperator(module=safe_critic_net, in_keys=["observation"], out_keys=["c_state_value"])
+        init_module(r_value_module, 'reward value function')
+        init_module(c_value_module, 'constraint value function')
 
-    if cfg.agent.lagrange.type == 'naive':
-        lag_module = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
-                                   cost_limit=cfg.agent.lagrange.params.cost_limit,
-                                   lr=cfg.agent.lag_lr)
-    elif cfg.agent.lagrange.type == 'pid':
-        lag_module = PIDLagrange(**cfg.agent.lagrange.params)
+        r_advantage_module = GAE(value_network=r_value_module, average_gae=True, **cfg.agent.estimator)
+        r_advantage_module.set_keys(advantage='r_advantage', value_target='r_value_target', value='r_state_value')
+        c_advantage_module = GAE(value_network=c_value_module, average_gae=True, **cfg.agent.estimator)
+        c_advantage_module.set_keys(advantage='c_advantage', value_target='c_value_target', value='c_state_value')
+
+        if cfg.agent.lagrange.type == 'naive':
+            lag_module = NaiveLagrange(initial_value=cfg.agent.lagrange.params.initial_value,
+                                       cost_limit=cfg.agent.lagrange.params.cost_limit,
+                                       lr=cfg.agent.lag_lr)
+        elif cfg.agent.lagrange.type == 'pid':
+            lag_module = PIDLagrange(**cfg.agent.lagrange.params)
+        else:
+            raise ValueError(f'Unknown lagrange type {cfg.agent.lagrange.type}, either naive or pid')
+
+        loss_module = PPOLagLoss(
+            actor=policy_module,
+            critic=r_value_module,
+            safe_critic=c_value_module,
+            r_value_estimator=r_advantage_module,
+            c_value_estimator=c_advantage_module,
+            **cfg.agent.loss_module,
+            **cfg.agent.loss_module_lag
+        )
+        nets = (actor_net, critic_net, safe_critic_net)
     else:
-        raise ValueError(f'Unknown lagrange type {cfg.agent.lagrange}, either naive or pid')
+        raise ValueError(f'Unknown algorithm {cfg.agent.algo}, either ppo or ppolag')
 
-    loss_module = PPOLagLoss(
-        actor=policy_module,
-        critic=r_value_module,
-        safe_critic=c_value_module,
-        r_value_estimator=r_advantage_module,
-        c_value_estimator=c_advantage_module,
-        **cfg.agent.loss_module
-    )
-
-    return loss_module, lag_module, policy_module, (actor_net, critic_net, safe_critic_net)
+    return loss_module, lag_module, policy_module, nets
 
 
 def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict, cost_limit: int,
@@ -388,14 +396,18 @@ def train_loop(cfg: DictConfig,
         if cfg.agent.lagrange.positive_violation:
             avg_violation = max(0., avg_violation)
         cost_td = TensorDict({'avg_cost': avg_cost, 'avg_violation': avg_violation}, [])
+
+        if cfg.agent.algo == 'ppolag':
+            # Optimization: update lagrangian
+            loss_lagrangian = lag_module(cost_td, cost_scale=cfg.agent.loss_module_lag.cost_scale)
+            loss_module.set_lagrangian(lag_module.get())
+
+            if cfg.agent.use_beta:
+                loss_module.update_beta(rollout_td, optim, cfg.training.max_grad_norm)
+        else:
+            rollout_td['next', 'reward'] = rollout_td['next', 'reward'][:, 0]
+            loss_lagrangian = 0.
         replay_buffer.extend(rollout_td.reshape(-1).cpu())
-
-        # Optimization: first update lagrangian
-        loss_lagrangian = lag_module(cost_td, cost_scale=cfg.agent.loss_module.cost_scale)
-        loss_module.set_lagrangian(lag_module.get())
-
-        if cfg.agent.use_beta:
-            loss_module.update_beta(rollout_td, optim, cfg.training.max_grad_norm)
 
         # Optimization: compute loss and optimize
         for epoch in range(cfg.training.num_epochs):
@@ -427,8 +439,10 @@ def train_loop(cfg: DictConfig,
                      'train/loss_lagrangian': loss_lagrangian,
                      'debug/actor_lr': optim.param_groups[0]["lr"],
                      'debug/critic_lr': optim.param_groups[1]["lr"],
-                     **{f'debug/{k}': v.item() for k, v in lag_module.get_logs().items()}}
-        if cfg.agent.use_beta:
+                     }
+        if lag_module is not None:
+            train_log = {**train_log, **{f'debug/{k}': v.item() for k, v in lag_module.get_logs().items()}}
+        if cfg.agent.algo == 'ppolag' and cfg.agent.use_beta:
             train_log['debug/beta'] = loss_module.beta.item()
         if cfg.environment.variant == 'cvirt_in':
             train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
@@ -454,7 +468,7 @@ def train_loop(cfg: DictConfig,
         train_str = f"[T] reward: {train_log['train/avg_score']: 1.2f}, " \
                     f"violation: {train_log['train/avg_violation']: 1.2f}, " \
                     f"cost: {train_log['train/avg_cost']: 4.0f}, " \
-                    f"lag: {lag_module.get(): 3.0f} "
+                    f"lag: {lag_module.get() if lag_module is not None else 0.: 3.0f} "
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
 
         if eval_log['eval/stochastic/surrogate_score'] < best_score:  # the closer to 0, the better

@@ -35,6 +35,7 @@ loss_module:
   gamma: 1.0
   loss_critic_type: "smooth_l1"
   normalize_advantage: True
+loss_module_lag:
   target_kl: 0.025
   reward_scale: 0.01
   cost_scale: 0.01
