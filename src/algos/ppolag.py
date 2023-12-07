@@ -158,6 +158,13 @@ class PPOLagLoss(ClipPPOLoss):
             loss_pi = (-r_gain + self.lagrangian * self.beta * c_gain).mean() / (1 + self.lagrangian)
             td_out.set("loss_pi", loss_pi)
 
+        # ESS for logging
+        with torch.no_grad():
+            lw = pi_logratio.squeeze()
+            ess = (2 * lw.logsumexp(0) - (2 * lw).logsumexp(0)).exp()
+            batch = pi_logratio.shape[0]
+            td_out.set('ESS', ess.mean() / batch)
+
         # compute entropy and entropy loss
         if self.entropy_bonus:
             entropy = self.get_entropy_bonus(dist)
