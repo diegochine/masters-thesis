@@ -3,7 +3,7 @@ env_type: cumulative
 variant: both_cvirts
 controller: unify
 safety_layer: False
-in_cap: 0
+in_cap: 500
 cost_fn_type: sparse
 storage_io_bound: 200
 
