@@ -8,7 +8,7 @@ WORKDIR /thesis
 
 RUN apt-get install python3 python3-pip -y
 RUN pip3 install torch --index-url https://download.pytorch.org/whl/cpu && pip3 install -r requirements.txt
+RUN printf "wandb login\nwandb agent \$1\n" > run.sh
+RUN ["chmod", "+x", "run.sh"]
 
-ENV WANDB_API_KEY=bb91b382cc121df7e109ec0ad0275f1accc4c2f4
-
-CMD ["wandb", "agent", "unify/long-term-constraints/ms3mz0fx"]
+ENTRYPOINT ["/bin/sh", "/thesis/run.sh"]
