@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import hydra
 import omegaconf
@@ -133,9 +134,14 @@ def main(cfg: DictConfig) -> None:
     pbar = tqdm(total=total_frames, desc="Training", unit=" frames")
     train_loop(cfg, collector, device, eval_env, loss_module, lag_module, optim, pbar, policy_module, replay_buffer, scheduler)
 
+    # clean up
+    shutil.rmtree(cfg.training.save_dir)
+    wandb_dir = wandb.run.dir[:-6] if 'files' in wandb.run.dir else wandb.run.dir
     collector.shutdown()
     pbar.close()
     wandb.finish()
+    print(f'Cleaning up {wandb_dir}')
+    shutil.rmtree(wandb_dir)
 
 
 if __name__ == "__main__":
