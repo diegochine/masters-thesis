@@ -472,7 +472,7 @@ def train_loop(cfg: DictConfig,
         eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
 
         if eval_log['eval/stochastic/surrogate_score'] < best_score:  # the closer to 0, the better
-            best_score = surrogate_score
+            best_score = eval_log['eval/stochastic/surrogate_score']
             best_it = it
             torch.save(policy_module.state_dict(), f'{cfg.training.save_dir}/policy_it{it}.pt')
 
