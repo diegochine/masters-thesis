@@ -74,8 +74,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         :return: tuple(numpy.array, dict); array is pv and load values for the current instance, dict is info
         """
 
-        observations = np.concatenate((self.p_ren_pv_pred / np.max(self.p_ren_pv_pred),
-                                       self.tot_cons_pred / np.max(self.tot_cons_pred)),
+        observations = np.concatenate((self.p_ren_pv_pred,
+                                       self.tot_cons_pred),
                                       axis=0)
         one_hot_timestep = np.zeros(shape=(self.N,))
         one_hot_timestep[int(self.timestep)] = 1
