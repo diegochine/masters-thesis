@@ -1,17 +1,130 @@
-max_steps: 96
-env_type: cumulative
-variant: both_cvirts
-controller: unify
-safety_layer: False
-in_cap: 500
-cost_fn_type: sparse
-storage_io_bound: 200
+params:
+  max_steps: 96
+  env_type: cumulative
+  variant: both_cvirts
+  controller: unify
+  safety_layer: False
+  in_cap: 500
+  cost_fn_type: sparse
+  storage_io_bound: 200
 
-predictions_path: ${hydra:runtime.cwd}/src/data/Dataset10k.csv
-prices_path: ${hydra:runtime.cwd}/src/data/gmePrices.npy
-shifts_path: ${hydra:runtime.cwd}/src/data/optShift.npy
+  predictions_path: ${hydra:runtime.cwd}/src/data/Dataset10k.csv
+  prices_path: ${hydra:runtime.cwd}/src/data/gmePrices.npy
+  shifts_path: ${hydra:runtime.cwd}/src/data/optShift.npy
+
+  iter_init_stats: 960
+
 instances:
-  - 2732
-
-
-iter_init_stats: 10000
+  train: 2732
+  valid:
+    - 512
+    - 1024
+    - 2048
+    - 3072
+    - 4096
+    - 5120
+    - 6144
+    - 7168
+    - 8192
+    - 9216
+  test:  # print(''.join(f'    - {i}\n' for i in sorted(random.sample(list(range(10000)), 100))))
+    - 121
+    - 280
+    - 320
+    - 457
+    - 515
+    - 530
+    - 804
+    - 858
+    - 990
+    - 1015
+    - 1066
+    - 1111
+    - 1136
+    - 1324
+    - 1347
+    - 1442
+    - 1498
+    - 1791
+    - 2199
+    - 2285
+    - 2348
+    - 2354
+    - 2670
+    - 2723
+    - 2762
+    - 2827
+    - 3138
+    - 3376
+    - 3412
+    - 4052
+    - 4124
+    - 4234
+    - 4383
+    - 4596
+    - 4606
+    - 4618
+    - 4769
+    - 4774
+    - 4851
+    - 5115
+    - 5153
+    - 5226
+    - 5419
+    - 5439
+    - 5463
+    - 5587
+    - 5785
+    - 5991
+    - 6019
+    - 6169
+    - 6176
+    - 6203
+    - 6379
+    - 6447
+    - 6603
+    - 6636
+    - 6776
+    - 6843
+    - 7033
+    - 7039
+    - 7145
+    - 7146
+    - 7210
+    - 7217
+    - 7281
+    - 7309
+    - 7488
+    - 7513
+    - 7674
+    - 7708
+    - 7726
+    - 7798
+    - 7801
+    - 7837
+    - 7842
+    - 7888
+    - 8006
+    - 8043
+    - 8110
+    - 8180
+    - 8203
+    - 8210
+    - 8287
+    - 8319
+    - 8729
+    - 8854
+    - 8934
+    - 8963
+    - 8966
+    - 9105
+    - 9360
+    - 9384
+    - 9423
+    - 9439
+    - 9556
+    - 9571
+    - 9686
+    - 9795
+    - 9879
+    - 9890

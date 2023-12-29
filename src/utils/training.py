@@ -274,7 +274,7 @@ def get_agent_modules(env: EnvBase,
 
 
 def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_scores: dict, cost_limit: int,
-             log_type='avg', stoch_rollouts=25):
+             log_type='avg', stoch_rollouts=10):
     """Evaluate the policy on the evaluation environment.
     :param eval_env: environment to evaluate on.
     :param policy_module: policy to evaluate.
@@ -293,7 +293,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
                 eval_rollout = eval_env.rollout(100, policy_module)
             rewards = get_rollout_scores(eval_rollout)
             # normalize scores according to optimal score of each instance
-            optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
+            optimal_scores_tensor = torch.as_tensor([float(optimal_scores[int(instance)])
                                                      for instance in rewards[:, 2]])
             # note the following 3 vars refer to episode (cumulative) values
             all_costs = rewards[:, 1]
@@ -312,7 +312,7 @@ def evaluate(eval_env: EnvBase, policy_module: ProbabilisticActor, optimal_score
                 actions_log = {f'{prefix}/{k}': np.array([[v] for h in histories for v in h[k]]) for k in
                                histories[0].keys()}
             else:  # final evaluation, retain temporal info
-                actions_log = {f'{prefix}/{k}': [v for h in histories for v in h[k]] for k in histories[0].keys()}
+                actions_log = {f'{prefix}/{k}': [v for v in histories[0][k]] for k in histories[0].keys()}
 
             eval_log = {**eval_log, **actions_log}
             eval_env.reset()  # reset the environment after the eval rollout
@@ -357,7 +357,8 @@ def final_evaluation(cost_limit, eval_env, optimal_scores, policy_module, prefix
 def train_loop(cfg: DictConfig,
                collector: DataCollectorBase,
                device: torch.device,
-               eval_env: EnvBase,
+               valid_env: EnvBase,
+               test_env: EnvBase,
                loss_module: LossModule,
                lag_module: LagrangeBase,
                optim: torch.optim.Optimizer,
@@ -369,7 +370,8 @@ def train_loop(cfg: DictConfig,
     :param cfg: hydra config
     :param collector: torchrl data collector
     :param device: torch device
-    :param eval_env: evaluation environment
+    :param valid_env: validation environment
+    :param test_env: test environment
     :param loss_module: module used to compute the loss
     :param optim: optimizer
     :param pbar: tqdm progress bar
@@ -377,8 +379,10 @@ def train_loop(cfg: DictConfig,
     :param replay_buffer: replay buffer
     :param scheduler: learning rate scheduler
     """
-    optimal_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
-                      for instance in cfg.environment.instances}
+    optimal_train_score = np.load(
+        hydra.utils.to_absolute_path(f'src/data/oracle/{cfg.environment.instances.train}_cost.npy'))
+    optimal_valid_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
+                            for instance in cfg.environment.instances.valid}
     num_batches = cfg.training.frames_per_batch // cfg.training.batch_size
     cost_limit = cfg.agent.lagrange.params.cost_limit
     train_step = 0
@@ -429,10 +433,8 @@ def train_loop(cfg: DictConfig,
                     train_step += 1
 
         scheduler.step()
-        optimal_scores_tensor = torch.as_tensor([int(optimal_scores[int(instance)])
-                                                 for instance in rewards[:, 2]])
         train_log = {'train/iteration': it,
-                     'train/avg_score': (-optimal_scores_tensor / rewards[:, 0]).mean().item(),
+                     'train/avg_score': (-optimal_train_score / rewards[:, 0]).mean().item(),
                      'train/avg_cost': avg_cost,
                      'train/avg_violation': max(0, avg_violation) / (1000 - cost_limit),
                      'train/surrogate_score': surrogate_score,
@@ -444,19 +446,19 @@ def train_loop(cfg: DictConfig,
             train_log = {**train_log, **{f'debug/{k}': v.item() for k, v in lag_module.get_logs().items()}}
         if cfg.agent.algo == 'ppolag' and cfg.agent.use_beta:
             train_log['debug/beta'] = loss_module.beta.item()
-        if cfg.environment.variant == 'cvirt_in':
+        if cfg.environment.params.variant == 'cvirt_in':
             train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
             train_log['train/loc_cvirt_out'] = 0.
             train_log['train/scale_cvirt_out'] = 0.
             train_log['train/loc_in_range'] = (rollout_td['loc'][:, 0].max() - rollout_td['loc'][:, 0].min()).item()
-        elif cfg.environment.variant == 'cvirt_out':
+        elif cfg.environment.params.variant == 'cvirt_out':
             train_log['train/loc_cvirt_in'] = 0.
             train_log['train/scale_cvirt_in'] = 0.
             train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
             train_log['train/loc_out_range'] = (rollout_td['loc'][:, 0].max() - rollout_td['loc'][:, 0].min()).item()
-        else:  # cfg.environment.variant == 'both_cvirts'
+        else:  # cfg.environment.params.variant == 'both_cvirts'
             train_log['train/loc_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 0]))
             train_log['train/scale_cvirt_in'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['scale'][:, 0]))
             train_log['train/loc_cvirt_out'] = wandb.Histogram(np_histogram=np.histogram(rollout_td['loc'][:, 1]))
@@ -469,7 +471,7 @@ def train_loop(cfg: DictConfig,
                     f"violation: {train_log['train/avg_violation']: 1.2f}, " \
                     f"cost: {train_log['train/avg_cost']: 4.0f}, " \
                     f"lag: {lag_module.get() if lag_module is not None else 0.: 3.0f} "
-        eval_log, eval_str = evaluate(eval_env, policy_module, optimal_scores, cost_limit)
+        eval_log, eval_str = evaluate(valid_env, policy_module, optimal_valid_scores, cost_limit)
 
         if eval_log['eval/stochastic/surrogate_score'] < best_score:  # the closer to 0, the better
             best_score = eval_log['eval/stochastic/surrogate_score']
@@ -480,7 +482,14 @@ def train_loop(cfg: DictConfig,
         if cfg.wandb.use_wandb:
             wandb.log({**train_log, **eval_log})
 
+    collector.shutdown()
+    pbar.close()
+
     if cfg.wandb.use_wandb:  # final evaluation
-        final_evaluation(cost_limit, eval_env, optimal_scores, policy_module, 'final_eval')
+        optimal_test_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
+                               for instance in cfg.environment.instances.test}
+        print('Performing testing with final model')
+        final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, 'test/final')
         policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))
-        final_evaluation(cost_limit, eval_env, optimal_scores, policy_module, 'best_eval')
+        print('Perfoming testing with best model')
+        final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, 'test/best')

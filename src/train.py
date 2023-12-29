@@ -5,11 +5,11 @@ import hydra
 import omegaconf
 import torch
 import wandb
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from torchrl.collectors import MultiSyncDataCollector
 from torchrl.data import TensorDictReplayBuffer, LazyMemmapStorage
 from torchrl.data.replay_buffers import SamplerWithoutReplacement
-from torchrl.envs import SerialEnv
+from torchrl.envs import SerialEnv, ParallelEnv
 from tqdm import tqdm
 
 from src.envs import VPPEnv
@@ -20,12 +20,12 @@ def init_wandb(cfg):
     tags = [cfg.agent.algo]
     if cfg.tag:
         tags += [cfg.tag]
-    if cfg.environment.variant != 'toy':
-        tags += ['safety_layer'] if cfg.environment.safety_layer else []
-        tags += [cfg.environment.variant]
-        tags += list(map(lambda i: str(i), OmegaConf.to_object(cfg.environment.instances)))
+    if cfg.environment.params.variant != 'toy':
+        tags += ['safety_layer'] if cfg.environment.params.safety_layer else []
+        tags += [cfg.environment.params.variant, str(cfg.environment.instances.train)]
+        tags += []
     wandb_cfg = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    wandb.init(**cfg.wandb.setup, group=cfg.environment.variant, tags=tags, config=wandb_cfg,
+    wandb.init(**cfg.wandb.setup, group=cfg.environment.params.variant, tags=tags, config=wandb_cfg,
                settings=wandb.Settings(start_method="thread"), reinit=True)
     # for net in nets:
     #     wandb.watch(net, **cfg.wandb.watch)
@@ -39,7 +39,8 @@ def init_wandb(cfg):
     wandb.define_metric("final_eval/deterministic/all_scores", summary="last", step_metric='timestep_deterministic')
     wandb.define_metric("final_eval/deterministic/all_violations", summary="last", step_metric='timestep_deterministic')
     wandb.define_metric("final_eval/deterministic/all_costs", summary="last", step_metric='timestep_deterministic')
-    wandb.define_metric("final_eval/deterministic/avg_storage_capacity", summary="last", step_metric='timestep_deterministic')
+    wandb.define_metric("final_eval/deterministic/avg_storage_capacity", summary="last",
+                        step_metric='timestep_deterministic')
     wandb.define_metric("final_eval/stochastic/all_scores", summary="last", step_metric='timestep_stochastic')
     wandb.define_metric("final_eval/stochastic/all_violations", summary="last", step_metric='timestep_stochastic')
     wandb.define_metric("final_eval/stochastic/all_costs", summary="last", step_metric='timestep_stochastic')
@@ -85,13 +86,14 @@ def main(cfg: DictConfig) -> None:
     total_frames = cfg.training.frames_per_batch * cfg.training.iterations
 
     # Create env to initialize modules and normalization state dict
-    env = make_env(device=device, **cfg.environment)
+    env = make_env(device=device, instances=[cfg.environment.instances.train] + cfg.environment.instances.valid,
+                   **cfg.environment.params)
     loss_module, lag_module, policy_module, nets = get_agent_modules(env, cfg, device)
     t_state_dict = env.transform[0].state_dict()
     del env
 
     env_kwargs = [{'device': device, 't_state_dict': t_state_dict, 'wandb_run': None,
-                   **cfg.environment}] * cfg.training.num_envs
+                   'instances': [cfg.environment.instances.train], **cfg.environment.params}] * cfg.training.num_envs
     # Initialize wandb
     if cfg.wandb.use_wandb:
         init_wandb(cfg)
@@ -114,12 +116,22 @@ def main(cfg: DictConfig) -> None:
         prefetch=cfg.training.num_epochs,
         sampler=SamplerWithoutReplacement()  # for PPO only, ensures the entire dataset is used
     )
-    eval_env = SerialEnv(num_workers=len(cfg.environment.instances),
-                         create_env_fn=make_env,
-                         create_env_kwargs=[
-                             {'device': device, 't_state_dict': t_state_dict, 'fixed_noise': True, **cfg.environment,
-                              'instances': [instance]} for instance in cfg.environment.instances])
-    eval_env.reset()
+
+    valid_env = ParallelEnv(num_workers=len(cfg.environment.instances.valid), create_env_fn=make_env,
+                            create_env_kwargs=[
+                                {'device': device, 't_state_dict': t_state_dict, 'fixed_noise': True,
+                                 **cfg.environment.params,
+                                 'instances': [instance]} for instance in cfg.environment.instances.valid])
+    if cfg.environment.instances.test is not None:
+        test_env = SerialEnv(num_workers=len(cfg.environment.instances.test), create_env_fn=make_env,
+                             create_env_kwargs=[
+                                 {'device': device, 't_state_dict': t_state_dict, 'fixed_noise': True,
+                                  **cfg.environment.params,
+                                  'instances': [instance]} for instance in cfg.environment.instances.test])
+        test_env.reset()
+    else:
+        test_env = valid_env
+    valid_env.reset()
 
     optim = torch.optim.Adam([
         {'params': [p for k, p in loss_module.named_parameters() if 'critic' in k], 'lr': cfg.agent.critic_lr},
@@ -132,13 +144,13 @@ def main(cfg: DictConfig) -> None:
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda _: 1.)
 
     pbar = tqdm(total=total_frames, desc="Training", unit=" frames")
-    train_loop(cfg, collector, device, eval_env, loss_module, lag_module, optim, pbar, policy_module, replay_buffer, scheduler)
+    train_loop(cfg=cfg, collector=collector, device=device, valid_env=valid_env, test_env=test_env,
+               loss_module=loss_module, lag_module=lag_module, optim=optim, pbar=pbar, policy_module=policy_module,
+               replay_buffer=replay_buffer, scheduler=scheduler)
 
     # clean up
     shutil.rmtree(cfg.training.save_dir)
     wandb_dir = wandb.run.dir[:-6] if 'files' in wandb.run.dir else wandb.run.dir
-    collector.shutdown()
-    pbar.close()
     wandb.finish()
     print(f'Cleaning up {wandb_dir}')
     shutil.rmtree(wandb_dir)
