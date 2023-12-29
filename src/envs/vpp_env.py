@@ -83,7 +83,8 @@ class VPPEnv(Env):
         self.mr = np.random.choice(self.predictions.index)
 
         if fixed_noise:
-            rng = np.random.default_rng(42)
+            assert len(self.predictions) == 1, f'fixed_noise can be used only with one instance'
+            rng = np.random.default_rng(self.mr)
             self.noise = (rng.normal(0, self.noise_std_dev, self.N),
                           rng.normal(0, self.noise_std_dev, self.N))
         else:
