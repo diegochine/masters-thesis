@@ -80,7 +80,7 @@ class VPPEnv(Env):
         self.p_diesel_max = 1200
 
         # We randomly choose an instance
-        self.mr = np.random.choice(self.predictions.index)
+        self.mr = self.get_rng().choice(self.predictions.index)
 
         if fixed_noise:
             assert len(self.predictions) == 1, f'fixed_noise can be used only with one instance'
@@ -167,6 +167,9 @@ class VPPEnv(Env):
 
         return timestamps
 
+    def get_rng(self):
+        return self._np_random if self._np_random is not None else np.random
+
     def _create_instance_variables(self):
         """
         Create predicted and real, PV and Load for the current instance.
@@ -184,12 +187,8 @@ class VPPEnv(Env):
         self.tot_cons_pred = np.asarray(self.tot_cons_pred)
 
         if self.noise is None:
-            if self._np_random is not None:
-                noise_pv = self._np_random.normal(0, self.noise_std_dev, self.N)
-                noise_load = self._np_random.normal(0, self.noise_std_dev, self.N)
-            else:
-                noise_pv = np.random.normal(0, self.noise_std_dev, self.N)
-                noise_load = np.random.normal(0, self.noise_std_dev, self.N)
+            noise_pv = self.get_rng().normal(0, self.noise_std_dev, self.N)
+            noise_load = self.get_rng().normal(0, self.noise_std_dev, self.N)
         else:
             noise_pv, noise_load = self.noise
 
@@ -245,7 +244,7 @@ class VPPEnv(Env):
         self._clear()
 
         # We randomly choose an instance
-        self.mr = np.random.choice(self.predictions.index)
+        self.mr = self.get_rng().choice(self.predictions.index)
         self._create_instance_variables()
         return self._get_observations()
 
