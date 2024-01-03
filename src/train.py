@@ -86,14 +86,14 @@ def main(cfg: DictConfig) -> None:
     total_frames = cfg.training.frames_per_batch * cfg.training.iterations
 
     # Create env to initialize modules and normalization state dict
-    env = make_env(device=device, instances=[cfg.environment.instances.train] + cfg.environment.instances.valid,
+    env = make_env(device=device, instances=cfg.environment.instances.train,
                    **cfg.environment.params)
     loss_module, lag_module, policy_module, nets = get_agent_modules(env, cfg, device)
     t_state_dict = env.transform[0].state_dict()
     del env
 
     env_kwargs = [{'device': device, 't_state_dict': t_state_dict, 'wandb_run': None,
-                   'instances': [cfg.environment.instances.train], **cfg.environment.params}] * cfg.training.num_envs
+                   'instances': cfg.environment.instances.train, **cfg.environment.params}] * cfg.training.num_envs
     # Initialize wandb
     if cfg.wandb.use_wandb:
         init_wandb(cfg)

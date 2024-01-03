@@ -379,8 +379,8 @@ def train_loop(cfg: DictConfig,
     :param replay_buffer: replay buffer
     :param scheduler: learning rate scheduler
     """
-    optimal_train_score = np.load(
-        hydra.utils.to_absolute_path(f'src/data/oracle/{cfg.environment.instances.train}_cost.npy'))
+    optimal_train_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
+                            for instance in cfg.environment.instances.train}
     optimal_valid_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
                             for instance in cfg.environment.instances.valid}
     num_batches = cfg.training.frames_per_batch // cfg.training.batch_size
@@ -433,8 +433,12 @@ def train_loop(cfg: DictConfig,
                     train_step += 1
 
         scheduler.step()
+
         train_log = {'train/iteration': it,
-                     'train/avg_score': (-optimal_train_score / rewards[:, 0]).mean().item(),
+                     # normalize score according to each rollout instance's optimal score
+                     'train/avg_score': (-torch.as_tensor([float(optimal_train_scores[int(instance)])
+                                                           for instance in rewards[:, 2]])
+                                         / rewards[:, 0]).mean().item(),
                      'train/avg_cost': avg_cost,
                      'train/avg_violation': max(0, avg_violation) / (1000 - cost_limit),
                      'train/surrogate_score': surrogate_score,

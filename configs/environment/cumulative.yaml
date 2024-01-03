@@ -15,7 +15,9 @@ params:
   iter_init_stats: 960
 
 instances:
-  train: 2732
+  train:
+    - 537
+    - 2732
   valid:
     - 512
     - 1024
