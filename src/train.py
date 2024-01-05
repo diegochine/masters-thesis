@@ -122,7 +122,7 @@ def main(cfg: DictConfig) -> None:
                                 {'device': device, 't_state_dict': t_state_dict, 'fixed_noise': True,
                                  **cfg.environment.params,
                                  'instances': [instance]} for instance in cfg.environment.instances.valid])
-    if cfg.environment.instances.test is not None:
+    if cfg.environment.instances.test not in (None, 'None'):  # wandb sweep sends None as string
         test_env = SerialEnv(num_workers=len(cfg.environment.instances.test), create_env_fn=make_env,
                              create_env_kwargs=[
                                  {'device': device, 't_state_dict': t_state_dict, 'fixed_noise': True,
