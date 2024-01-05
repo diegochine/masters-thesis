@@ -490,10 +490,16 @@ def train_loop(cfg: DictConfig,
     pbar.close()
 
     if cfg.wandb.use_wandb:  # final evaluation
+        if cfg.environment.instances.test is not None:
+            test_instances = cfg.environment.instances.test
+            prefix = 'test'
+        else:
+            test_instances = cfg.environment.instances.valid
+            prefix = 'valid'
         optimal_test_scores = {instance: np.load(hydra.utils.to_absolute_path(f'src/data/oracle/{instance}_cost.npy'))
-                               for instance in cfg.environment.instances.test}
-        print('Performing testing with final model')
-        final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, 'test/final')
+                               for instance in test_instances}
+        print(f'Performing {prefix} with final model')
+        final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, f'{prefix}/final')
         policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))
-        print('Perfoming testing with best model')
-        final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, 'test/best')
+        print(f'Perfoming {prefix} with best model')
+        final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, f'{prefix}/best')
