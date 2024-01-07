@@ -22,8 +22,7 @@ def init_wandb(cfg):
         tags += [cfg.tag]
     if cfg.environment.params.variant != 'toy':
         tags += ['safety_layer'] if cfg.environment.params.safety_layer else []
-        tags += [cfg.environment.params.variant, str(cfg.environment.instances.train)]
-        tags += []
+        tags += [cfg.environment.params.variant]
     wandb_cfg = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     wandb.init(**cfg.wandb.setup, group=cfg.environment.params.variant, tags=tags, config=wandb_cfg,
                settings=wandb.Settings(start_method="thread"), reinit=True)
