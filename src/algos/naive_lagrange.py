@@ -19,7 +19,7 @@ class NaiveLagrange(LagrangeBase):
         super().__init__(*args, **kwargs)
         assert initial_value >= 0.
         # To enforce lambda > 0, we train a real parameter lambda_0 and use relu to map it to R^+.
-        lag = torch.nn.Parameter(torch.tensor(initial_value))
+        lag = torch.nn.Parameter(torch.tensor(initial_value, dtype=torch.float32))
         self.register_parameter('lag', lag)
         self.register_buffer('cost_limit', torch.tensor(cost_limit))
         self.proj = torch.nn.functional.relu
