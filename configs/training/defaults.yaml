@@ -6,3 +6,4 @@ frames_per_batch: 3000  # Number of frames collected for each rollout
 iterations: 200    # Total number of training iterations
 num_epochs: 10     # Number of epochs per batch of data
 batch_size: 640   # Sub-batch size used within each epoch
+eta_min: 1e-5      # final learning rate value if scheduling is used
