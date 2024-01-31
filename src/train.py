@@ -26,8 +26,7 @@ def init_wandb(cfg):
     wandb_cfg = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     wandb.init(**cfg.wandb.setup, group=cfg.environment.params.variant, tags=tags, config=wandb_cfg,
                settings=wandb.Settings(start_method="thread"), reinit=True)
-    # for net in nets:
-    #     wandb.watch(net, **cfg.wandb.watch)
+
     wandb.define_metric("train/avg_score", summary="max", step_metric='train/iteration')
     wandb.define_metric("train/avg_violation", summary="min", step_metric='train/iteration')
     wandb.define_metric("train/avg_cost", summary="last", step_metric='train/iteration')
@@ -35,30 +34,33 @@ def init_wandb(cfg):
     wandb.define_metric("eval/avg_violation", summary="min", step_metric='train/iteration')
     wandb.define_metric("eval/avg_cost", summary="last", step_metric='train/iteration')
 
-    wandb.define_metric("final_eval/deterministic/all_scores", summary="last", step_metric='timestep_deterministic')
-    wandb.define_metric("final_eval/deterministic/all_violations", summary="last", step_metric='timestep_deterministic')
-    wandb.define_metric("final_eval/deterministic/all_costs", summary="last", step_metric='timestep_deterministic')
-    wandb.define_metric("final_eval/deterministic/avg_storage_capacity", summary="last",
-                        step_metric='timestep_deterministic')
-    wandb.define_metric("final_eval/stochastic/all_scores", summary="last", step_metric='timestep_stochastic')
-    wandb.define_metric("final_eval/stochastic/all_violations", summary="last", step_metric='timestep_stochastic')
-    wandb.define_metric("final_eval/stochastic/all_costs", summary="last", step_metric='timestep_stochastic')
-    wandb.define_metric("final_eval/stochastic/avg_storage_capacity", summary="last", step_metric='timestep_stochastic')
+    prefix = 'valid' if cfg.environment.instances.test in (None, 'None') else 'test'
+    for eval in ('best', 'final'):
+        wandb.define_metric(f"{prefix}/{eval}/deterministic/avg_score", summary="last", step_metric='timestep_deterministic')
+        wandb.define_metric(f"{prefix}/{eval}/deterministic/avg_violation", summary="last", step_metric='timestep_deterministic')
+        wandb.define_metric(f"{prefix}/{eval}/deterministic/avg_cost", summary="last", step_metric='timestep_deterministic')
+        wandb.define_metric(f"{prefix}/{eval}/deterministic/avg_storage_capacity", summary="last",
+                            step_metric='timestep_deterministic')
+        wandb.define_metric(f"{prefix}/{eval}/stochastic/avg_score", summary="last", step_metric='timestep_stochastic')
+        wandb.define_metric(f"{prefix}/{eval}/stochastic/avg_violation", summary="last", step_metric='timestep_stochastic')
+        wandb.define_metric(f"{prefix}/{eval}/stochastic/avg_cost", summary="last", step_metric='timestep_stochastic')
+        wandb.define_metric(f"{prefix}/{eval}/stochastic/avg_storage_capacity", summary="last", step_metric='timestep_stochastic')
 
-    wandb.define_metric("debug/actor_lr", step_metric='train/iteration')
-    wandb.define_metric("debug/critic_lr", step_metric='train/iteration')
-    wandb.define_metric("debug/lag_lr", step_metric='train/iteration')
     for a in VPPEnv.ACTIONS:
         wandb.define_metric(f"train/{a}", step_metric='train_episode')
         wandb.define_metric(f"eval/{a}", step_metric='train/iteration')
-        wandb.define_metric(f"final_eval/deterministic/{a}", step_metric='timestep_deterministic')
-        wandb.define_metric(f"final_eval/stochastic/{a}", step_metric='timestep_stochastic')
+        for eval in ('best', 'final'):
+            wandb.define_metric(f"{prefix}/{eval}/deterministic/{a}", step_metric='timestep_deterministic')
+            wandb.define_metric(f"{prefix}/{eval}/stochastic/{a}", step_metric='timestep_stochastic')
 
     wandb.define_metric("train/loss_lagrangian", step_metric='train_step')
     wandb.define_metric("train/loss_pi", step_metric='train_step')
     wandb.define_metric("train/loss_entropy", step_metric='train_step')
     wandb.define_metric("train/loss_r_critic", step_metric='train_step')
     wandb.define_metric("train/loss_c_critic", step_metric='train_step')
+    wandb.define_metric("debug/actor_lr", step_metric='train/iteration')
+    wandb.define_metric("debug/critic_lr", step_metric='train/iteration')
+    wandb.define_metric("debug/lag_lr", step_metric='train/iteration')
     wandb.define_metric("debug/lagrangian", step_metric='train/iteration')
     wandb.define_metric("debug/entropy", step_metric='train_step')
     wandb.define_metric("debug/preds_reward", step_metric='train_step')
