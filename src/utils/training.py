@@ -499,7 +499,9 @@ def train_loop(cfg: DictConfig,
             optimal_test_scores = optimal_valid_scores
             prefix = 'valid'
         print(f'Performing {prefix} with final model')
+        torch.save(policy_module.state_dict(), os.path.join(wandb.run.dir, 'policy_final.pt'))
         final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, f'{prefix}/final')
         policy_module.load_state_dict(torch.load(f'{cfg.training.save_dir}/policy_it{best_it}.pt'))
+        torch.save(policy_module.state_dict(), os.path.join(wandb.run.dir, 'policy_best.pt'))
         print(f'Perfoming {prefix} with best model')
         final_evaluation(cost_limit, test_env, optimal_test_scores, policy_module, f'{prefix}/best')
