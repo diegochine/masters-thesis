@@ -17,7 +17,7 @@ from torchrl.data import TensorDictReplayBuffer, UnboundedDiscreteTensorSpec
 from torchrl.envs import TransformedEnv, Compose, ObservationNorm, StepCounter, RewardSum, check_env_specs, \
     default_info_dict_reader, EnvBase
 from torchrl.envs.libs.gym import GymWrapper
-from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TruncatedNormal
+from torchrl.modules import MLP, ProbabilisticActor, ValueOperator, IndependentNormal, TruncatedNormal, TanhNormal
 from torchrl.objectives import LossModule, ClipPPOLoss, ValueEstimators
 from torchrl.objectives.value import GAE
 from torchrl.envs.utils import ExplorationType, set_exploration_type
@@ -110,7 +110,6 @@ def make_env(device: torch.device,
                                       noise_std_dev=noise_std_dev,
                                       savepath=None,
                                       use_safety_layer=safety_layer,
-                                      bound_storage_in=False,
                                       wandb_run=wandb_run,
                                       variant=variant,
                                       storage_io_bound=storage_io_bound,
@@ -177,10 +176,13 @@ def get_agent_modules(env: EnvBase,
 
     in_features = env.observation_spec['observation'].shape[0]
     activation_class = nn.ReLU if cfg.agent.activation == 'relu' else nn.Tanh
-    distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TruncatedNormal
-    distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
-                                                                        'max': cfg.agent.actor_dist_bound}
-
+    if cfg.environment.params.variant == 'flows-qp':
+        distribution_class = TanhNormal
+        distribution_kwargs = {'min': 0.0, 'max': 1.0}
+    else:
+        distribution_class = IndependentNormal if cfg.agent.actor_dist_bound <= 0 else TruncatedNormal
+        distribution_kwargs = None if cfg.agent.actor_dist_bound <= 0 else {'min': -cfg.agent.actor_dist_bound,
+                                                                            'max': cfg.agent.actor_dist_bound}
     if cfg.agent.state_dependent_std:  # scale outputted by net
         actor_net = nn.Sequential(
             MLP(in_features=in_features,

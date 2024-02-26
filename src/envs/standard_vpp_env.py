@@ -27,7 +27,6 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                  noise_std_dev: float = 0.02,
                  savepath: str = None,
                  use_safety_layer: bool = False,
-                 bound_storage_in: bool = True,
                  storage_io_bound: int = 200,
                  wandb_run: wandb.sdk.wandb_run.Run | None = None,
                  **kwargs):
@@ -39,8 +38,6 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         :param noise_std_dev: float; the standard deviation of the additive gaussian noise for the realizations.
         :param savepath: string; if not None, the gurobi models are saved to this directory.
         :param use_safety_layer: bool, if True enable safety layer during training.
-        :param bound_storage_in: bool; used to switch between enforcing p_storage_in var upper bound via the optimization model
-                                or letting the rl agent learn the constraint.
         :param storage_io_bound: int, upper bound for storage_{in, out} variables during online step.
         """
 
@@ -53,9 +50,8 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
                          use_safety_layer=use_safety_layer,
                          wandb_run=wandb_run,
                          **kwargs)
-        self._bound_storage_in = bound_storage_in
 
-        assert variant in {'cvirt_in', 'cvirt_out', 'both_cvirts'}, f'unrecognised variant {variant}'
+        assert variant in {'cvirt_in', 'cvirt_out', 'both_cvirts', 'flows-qp'}, f'unrecognised variant {variant}'
         self.variant = variant
 
         # Here we define the observation and action spaces
@@ -63,7 +59,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         if self.controller == 'rl':
             self.action_space = Box(low=-1, high=1, shape=(4,), dtype=np.float32)
         else:
-            act_shape = (2,) if self.variant == 'both_cvirts' else (1,)
+            act_shape = (2,) if self.variant in ('both_cvirts', 'flows-qp') else (1,)
             self.action_space = Box(low=-np.inf, high=np.inf, shape=act_shape, dtype=np.float32)
         assert 0 <= storage_io_bound <= self.cap_max, f'storage_io_bound must be between 0 and {self.cap_max}, got {storage_io_bound}'
         self.storage_io_bound = storage_io_bound
@@ -192,9 +188,13 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
             assert c_virt.shape == (1,)
             c_virt_in = 0.
             c_virt_out = c_virt[0]
-        else:  # self.variant == 'both_cvirts'
+        elif self.variant == 'both_cvirts':
             assert c_virt.shape == (2,)
             c_virt_in, c_virt_out = c_virt
+        else:  # self.variant == 'flows-qp'
+            assert c_virt.shape == (2,)
+            # these are actually flows, not costs
+            c_virt_in, c_virt_out = np.clip(c_virt, 0., 1.) * self.storage_io_bound
 
         # Create an optimization model
         mod = Model()
@@ -220,9 +220,7 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
 
         mod.addConstr(p_storage_in <= self.cap_max - self.storage)
         mod.addConstr(p_storage_out <= self.storage)
-
-        if self._bound_storage_in:
-            mod.addConstr(p_storage_in <= self.storage_io_bound)
+        mod.addConstr(p_storage_in <= self.storage_io_bound)
         mod.addConstr(p_storage_out <= self.storage_io_bound)
 
         # Diesel and grid bounds
@@ -230,9 +228,13 @@ class StandardVPPEnv(SafetyLayerVPPEnv):
         mod.addConstr(p_grid_in <= 600)
 
         # Objective function
-        obf = (self.c_grid[self.timestep] * p_grid_out + self.c_diesel * p_diesel +
-               c_virt_in * p_storage_in + c_virt_out * p_storage_out - self.c_grid[self.timestep] * p_grid_in)
-        mod.setObjective(obf)
+        if self.variant == 'flows-qp':
+            obf = (self.c_grid[self.timestep] * p_grid_out + self.c_diesel * p_diesel - self.c_grid[self.timestep] * p_grid_in +
+                   (p_storage_in - c_virt_in) ** 2 + (p_storage_out - c_virt_out) ** 2)
+        else:
+            obf = (self.c_grid[self.timestep] * p_grid_out + self.c_diesel * p_diesel +
+                   c_virt_in * p_storage_in + c_virt_out * p_storage_out - self.c_grid[self.timestep] * p_grid_in)
+        mod.setObjective(obf, GRB.MINIMIZE)
 
         feasible = self.optimize(mod)
 

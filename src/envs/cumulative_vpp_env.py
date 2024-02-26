@@ -50,7 +50,6 @@ class CumulativeVPPEnv(StandardVPPEnv):
                          noise_std_dev=noise_std_dev,
                          savepath=savepath,
                          use_safety_layer=use_safety_layer,
-                         bound_storage_in=True,
                          wandb_run=wandb_run,
                          variant=variant,
                          **kwargs)
@@ -60,7 +59,7 @@ class CumulativeVPPEnv(StandardVPPEnv):
         if self.controller == 'rl':
             self.action_space = Box(low=-1, high=1, shape=(4,), dtype=np.float32)
         else:
-            act_shape = (2,) if self.variant == 'both_cvirts' else (1,)
+            act_shape = (2,) if self.variant in ('both_cvirts', 'flows-qp') else (1,)
             self.action_space = Box(low=-np.inf, high=np.inf, shape=act_shape, dtype=np.float32)
         # Coefficient of the cumulative constraint,
         # i.e. on average storage capacity should be >= cumulative_storage_bound
