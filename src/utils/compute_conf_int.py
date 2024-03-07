@@ -77,7 +77,7 @@ def sanitize(variant_key, metric=None):
              'training.frames_per_batch': 'frames-per-batch', 'agent.algo': 'algo',
              'actor.net_spec.num_cells': 'actor-size', 'critic.net_spec.num_cells': 'critic-size',
              'agent.actor_lr': 'actor-lr', 'agent.critic_lr': 'critic-lr',
-             'agent.lagrange.type': 'lagrange-algo', 'agent.lag_lr': 'naive-lag-lr',
+             'agent.lagrange.type': 'lagrangian method', 'agent.lag_lr': 'naive-lag-lr',
              'agent.lagrange.params.initial_value': 'lagrangian-init',
              'agent.loss_module_lag.reward_scale': 'reward_scale', 'agent.loss_module_lag.cost_scale': 'cost_scale',
              'agent.lagrange.params.kd': 'pid-kd', 'agent.lagrange.params.ki': 'pid-ki', 'agent.lagrange.params.kp': 'pid-kp',
@@ -113,13 +113,19 @@ if __name__ == '__main__':
         df = pd.read_csv(f'{save_path}/data.csv')
 
     variants = df[args.variant_key].unique()
-    cost_limits = df['cost_limit'].unique()
+    df['cost limit'] = df['cost_limit']
+    cost_limits = df['cost limit'].unique()
     var_palette = dict(zip(variants, sns.color_palette(n_colors=len(variants))))
     cl_palette = dict(zip(cost_limits, sns.color_palette(palette='Set2', n_colors=len(cost_limits))))
     if args.hue is not None:
+        if args.hue == 'cost_limit':
+            args.hue = 'cost limit'
+            palette = 'Set2'
+        else:
+            palette = 'deep'
         hue_vals = df[args.hue].unique()
         assert len(hue_vals) > 1, f'There is only one unique val for {args.hue}, cannot use it as hue'
-        palette = dict(zip(hue_vals, sns.color_palette(palette='Set2' if args.hue == 'cost_limit' else 'deep', n_colors=len(hue_vals))))
+        palette = dict(zip(hue_vals, sns.color_palette(palette=palette, n_colors=len(hue_vals))))
         plot_kwargs = {'palette': palette, 'hue': args.hue, 'dodge': 0.5}
     else:
         plot_kwargs = {}
@@ -142,9 +148,9 @@ if __name__ == '__main__':
                     plt.axhline(cl, linewidth=1, linestyle='--', color=cl_palette[cl], label=cl)
                 plt.ylim(0, 1100)
             elif m == 'avg_score':
-                plt.ylim(0.85, 0.99)
+                plt.ylim(0.92, 0.99)
             cplot.fig.subplots_adjust(top=.95)
-            cplot.ax.set_title(f'95% CI for {metrics_to_title[m]} according to {sanitize(args.variant_key)}, {v} policy')
+            cplot.ax.set_title(f'95% CI for {metrics_to_title[m]} according to {sanitize(args.variant_key)}')
             cplot.ax.set_xlabel(sanitize(args.variant_key))
             cplot.ax.set_ylabel(metrics_to_label[m])
             cplot.fig.savefig(f'{save_path}/{sanitize(args.variant_key, m)}-{v[:3]}.png', dpi=300)
